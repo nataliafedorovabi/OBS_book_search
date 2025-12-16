@@ -1,6 +1,6 @@
 import requests
 from typing import List, Dict
-from src.config import OPENROUTER_API_KEY, LLM_MODEL
+from src.config import OPENROUTER_API_KEY, LLM_MODEL, MIN_RELEVANCE_SCORE
 from src.prompts import SYSTEM_PROMPT, NO_CONTEXT_RESPONSE, LOW_RELEVANCE_RESPONSE
 
 
@@ -19,7 +19,7 @@ class LLMClient:
             return NO_CONTEXT_RESPONSE
 
         # Проверяем релевантность (если все score низкие)
-        if all(chunk.get('score', 0) < 0.4 for chunk in context_chunks):
+        if all(chunk.get('score', 0) < MIN_RELEVANCE_SCORE for chunk in context_chunks):
             return LOW_RELEVANCE_RESPONSE
 
         # Формируем контекст

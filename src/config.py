@@ -20,7 +20,7 @@ CHUNK_OVERLAP = 100  # перекрытие между чанками
 
 # Настройки поиска
 TOP_K_RESULTS = 5  # количество релевантных фрагментов
-MIN_RELEVANCE_SCORE = 0.3  # минимальный порог релевантности (0-1)
+MIN_RELEVANCE_SCORE = 0.15  # минимальный порог релевантности (0-1)
 
 # Модель LLM (OpenRouter)
 # Бесплатные: google/gemini-flash-1.5-8b, meta-llama/llama-3.1-8b-instruct:free
