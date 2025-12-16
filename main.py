@@ -1,7 +1,7 @@
 import logging
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-from src.config import TELEGRAM_TOKEN, CHROMA_DIR
+from src.config import TELEGRAM_TOKEN
 from src.vector_store import VectorStore
 from src.llm import LLMClient
 from src.handlers import (
@@ -29,13 +29,7 @@ def main():
         logger.error("TELEGRAM_TOKEN не задан!")
         return
 
-    # Проверяем наличие базы данных
-    if not CHROMA_DIR.exists():
-        logger.error(f"База данных не найдена: {CHROMA_DIR}")
-        logger.error("Сначала запустите локальный скрипт парсинга книг!")
-        return
-
-    # Инициализируем сервисы
+    # Инициализируем сервисы (база создаётся из JSON если её нет)
     logger.info("Инициализация векторной базы...")
     vector_store = VectorStore()
 
