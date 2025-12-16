@@ -2,18 +2,22 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from src.vector_store import VectorStore
 from src.llm import LLMClient
+from src.rate_limiter import RateLimiter
+from src.config import ADMIN_TELEGRAM_IDS
 
 
 # Глобальные объекты (инициализируются в main.py)
 vector_store: VectorStore = None
 llm_client: LLMClient = None
+rate_limiter: RateLimiter = None
 
 
 def init_services(vs: VectorStore, llm: LLMClient):
     """Инициализация сервисов."""
-    global vector_store, llm_client
+    global vector_store, llm_client, rate_limiter
     vector_store = vs
     llm_client = llm
+    rate_limiter = RateLimiter()
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -70,6 +74,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Проверяем лимит запросов
+    if not rate_limiter.can_make_request():
+        await update.message.reply_text(
+            "Достигнут дневной лимит запросов. Попробуйте завтра.\n"
+            "Приносим извинения за неудобства."
+        )
+        return
+
     # Показываем статус "печатает"
     await context.bot.send_chat_action(
         chat_id=update.effective_chat.id,
@@ -82,4 +94,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Генерируем ответ через LLM
     answer = llm_client.generate_answer(question, relevant_chunks)
 
+    # Записываем запрос
+    rate_limiter.record_request()
+
+    # Уведомляем админов если приближаемся к лимиту
+    if rate_limiter.should_warn_admin() and ADMIN_TELEGRAM_IDS:
+        usage = rate_limiter.get_usage_info()
+        for admin_id in ADMIN_TELEGRAM_IDS:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=f"Внимание! Использовано {usage['percent_used']}% дневного лимита.\n"
+                         f"Запросов: {usage['requests_today']}/{usage['limit']}\n"
+                         f"Осталось: {usage['remaining']}"
+                )
+            except:
+                pass
+        rate_limiter.mark_warning_sent()
+
     await update.message.reply_text(answer)
+
+
+async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /usage - статистика использования (для админов)."""
+    user_id = str(update.effective_user.id)
+
+    # Команда только для админов
+    if ADMIN_TELEGRAM_IDS and user_id not in ADMIN_TELEGRAM_IDS:
+        return
+
+    usage = rate_limiter.get_usage_info()
+    await update.message.reply_text(
+        f"Статистика за {usage['date']}:\n\n"
+        f"Запросов: {usage['requests_today']}/{usage['limit']}\n"
+        f"Использовано: {usage['percent_used']}%\n"
+        f"Осталось: {usage['remaining']}"
+    )
