@@ -21,9 +21,6 @@ class VectorStore:
             model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
         )
 
-        # Загружаем чанки для keyword поиска
-        self._load_chunks_for_keyword_search()
-
         # Пробуем получить существующую коллекцию
         try:
             self.collection = self.client.get_collection(
@@ -36,15 +33,23 @@ class VectorStore:
             logger.info(f"Создаю новую базу из JSON...")
             self._create_from_json()
 
+        # Загружаем данные из ChromaDB для keyword поиска (не дублируем JSON)
+        self._load_chunks_for_keyword_search()
+
     def _load_chunks_for_keyword_search(self):
-        """Загружает чанки в память для keyword поиска."""
-        json_path = PARSED_DIR / "all_chunks.json"
-        if json_path.exists():
-            with open(json_path, 'r', encoding='utf-8') as f:
-                chunks = json.load(f)
-            for c in chunks:
-                self.chunks_by_id[c['id']] = c
+        """Загружает чанки из ChromaDB для keyword поиска (без дублирования)."""
+        try:
+            # Берём данные прямо из ChromaDB, не загружая JSON повторно
+            all_data = self.collection.get(include=["documents", "metadatas"])
+            for i, chunk_id in enumerate(all_data['ids']):
+                self.chunks_by_id[chunk_id] = {
+                    'id': chunk_id,
+                    'text': all_data['documents'][i],
+                    'metadata': all_data['metadatas'][i]
+                }
             logger.info(f"Загружено {len(self.chunks_by_id)} чанков для keyword поиска")
+        except Exception as e:
+            logger.warning(f"Не удалось загрузить чанки для keyword поиска: {e}")
 
     def _create_from_json(self):
         """Создаёт базу из JSON файла."""
