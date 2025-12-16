@@ -23,9 +23,9 @@ TOP_K_RESULTS = 5  # количество релевантных фрагмен�
 MIN_RELEVANCE_SCORE = 0.15  # минимальный порог релевантности (0-1)
 
 # Модель LLM (OpenRouter)
-# Бесплатные: google/gemini-flash-1.5-8b, meta-llama/llama-3.1-8b-instruct:free
+# Бесплатные: google/gemini-2.0-flash-exp:free, meta-llama/llama-3.1-8b-instruct:free
 # Платные: anthropic/claude-3.5-sonnet, openai/gpt-4o-mini
-LLM_MODEL = os.getenv("LLM_MODEL", "google/gemini-flash-1.5-8b")
+LLM_MODEL = os.getenv("LLM_MODEL", "google/gemini-2.0-flash-exp:free")
 
 # Лимиты запросов
 DAILY_REQUEST_LIMIT = 500  # запросов в день
