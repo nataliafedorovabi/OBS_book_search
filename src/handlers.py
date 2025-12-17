@@ -2,7 +2,7 @@ import asyncio
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes, Application
-from src.vector_store import VectorStore, set_admin_notify_callback
+from src.vector_store import VectorStore, set_admin_notify_callback, get_voyage_limiter
 from src.llm import LLMClient
 from src.rate_limiter import RateLimiter
 from src.config import ADMIN_TELEGRAM_IDS
@@ -202,3 +202,72 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Токенов: {voyage_stats.get('total_tokens', 0)}\n"
         f"Модель: {voyage_stats.get('model', 'N/A')}"
     )
+
+
+async def voyage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /voyage - статистика Voyage AI (для админов)."""
+    user_id = str(update.effective_user.id)
+
+    # Команда только для админов
+    if ADMIN_TELEGRAM_IDS and user_id not in ADMIN_TELEGRAM_IDS:
+        return
+
+    limiter = get_voyage_limiter()
+    if not limiter:
+        await update.message.reply_text("Voyage лимитер не инициализирован.")
+        return
+
+    stats = limiter.get_stats()
+
+    status_emoji = "🟢" if stats['percent_used'] < 80 else "🟡" if stats['percent_used'] < 90 else "🔴"
+    blocked_status = "⛔ ЗАБЛОКИРОВАН" if stats['limit_reached'] else "✅ Активен"
+
+    await update.message.reply_text(
+        f"📊 Voyage AI Статистика:\n\n"
+        f"Статус: {blocked_status}\n"
+        f"{status_emoji} Использовано: {stats['percent_used']:.2f}%\n\n"
+        f"Токенов: {stats['total_tokens']:,} / {stats['free_limit']:,}\n"
+        f"Жёсткий лимит: {stats['hard_limit']:,}\n"
+        f"Осталось до блокировки: {stats['remaining']:,}\n\n"
+        f"⚠️ Предупреждение отправлено: {'Да' if stats['warning_sent'] else 'Нет'}\n\n"
+        f"Сбросить счётчик: /voyage_reset"
+    )
+
+
+async def voyage_reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /voyage_reset - сброс счётчика (для админов)."""
+    user_id = str(update.effective_user.id)
+
+    # Команда только для админов
+    if ADMIN_TELEGRAM_IDS and user_id not in ADMIN_TELEGRAM_IDS:
+        return
+
+    limiter = get_voyage_limiter()
+    if not limiter:
+        await update.message.reply_text("Voyage лимитер не инициализирован.")
+        return
+
+    # Проверяем аргумент подтверждения
+    args = context.args
+    if args and args[0] == "CONFIRM":
+        stats_before = limiter.get_stats()
+        if limiter.reset(admin_confirmed=True):
+            await update.message.reply_text(
+                f"✅ Счётчик Voyage AI сброшен!\n\n"
+                f"Было: {stats_before['total_tokens']:,} токенов\n"
+                f"Стало: 0 токенов\n\n"
+                f"Бот снова принимает запросы."
+            )
+            logger.info(f"Voyage счётчик сброшен админом {user_id}")
+        else:
+            await update.message.reply_text("❌ Ошибка сброса счётчика.")
+    else:
+        stats = limiter.get_stats()
+        await update.message.reply_text(
+            f"⚠️ Вы уверены, что хотите сбросить счётчик?\n\n"
+            f"Текущее использование: {stats['total_tokens']:,} токенов\n\n"
+            f"Это следует делать только если:\n"
+            f"• Начался новый период (месяц)\n"
+            f"• Вы пополнили баланс Voyage AI\n\n"
+            f"Для подтверждения: /voyage_reset CONFIRM"
+        )

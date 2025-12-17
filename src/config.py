@@ -26,6 +26,11 @@ MIN_RELEVANCE_SCORE = 0.15  # минимальный порог релевант
 # Гибридный поиск (keyword + semantic). Отключить для экономии RAM
 ENABLE_HYBRID_SEARCH = os.getenv("ENABLE_HYBRID_SEARCH", "true").lower() == "true"
 
+# Лимиты Voyage AI (защита от списаний)
+# voyage-multilingual-2: 50M бесплатных токенов
+VOYAGE_FREE_LIMIT = 50_000_000  # 50M
+VOYAGE_HARD_LIMIT = int(os.getenv("VOYAGE_HARD_LIMIT", "45000000"))  # Остановить при 45M
+
 # Модель LLM (OpenRouter)
 # Бесплатные: meta-llama/llama-3.2-3b-instruct:free, qwen/qwen-2.5-7b-instruct:free
 # Платные: anthropic/claude-3.5-sonnet, openai/gpt-4o-mini

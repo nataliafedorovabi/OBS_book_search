@@ -4,27 +4,41 @@ import voyageai
 import chromadb
 from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
 from typing import List, Dict, Set, Optional, Callable
-from src.config import CHROMA_DIR, PARSED_DIR, TOP_K_RESULTS, MIN_RELEVANCE_SCORE, ENABLE_HYBRID_SEARCH, VOYAGE_API_KEY
+from src.config import CHROMA_DIR, PARSED_DIR, TOP_K_RESULTS, MIN_RELEVANCE_SCORE, ENABLE_HYBRID_SEARCH, VOYAGE_API_KEY, DATA_DIR
+from src.voyage_limiter import VoyageLimiter
 
 logger = logging.getLogger(__name__)
 
-# Глобальный callback для уведомлений (устанавливается из handlers.py)
+# Глобальные объекты
 _admin_notify_callback: Optional[Callable[[str], None]] = None
+_voyage_limiter: Optional[VoyageLimiter] = None
 
 
 def set_admin_notify_callback(callback: Callable[[str], None]):
     """Устанавливает callback для уведомления админа."""
-    global _admin_notify_callback
+    global _admin_notify_callback, _voyage_limiter
     _admin_notify_callback = callback
+    if _voyage_limiter:
+        _voyage_limiter.set_notify_callback(callback)
+
+
+def get_voyage_limiter() -> Optional[VoyageLimiter]:
+    """Возвращает лимитер Voyage для проверки статистики."""
+    return _voyage_limiter
+
+
+class VoyageLimitExceeded(Exception):
+    """Исключение когда лимит Voyage исчерпан."""
+    pass
 
 
 class VoyageEmbeddingFunction(EmbeddingFunction):
-    """Кастомная embedding функция для Voyage AI с логированием."""
+    """Кастомная embedding функция для Voyage AI с лимитером."""
 
-    def __init__(self, api_key: str, model: str = "voyage-multilingual-2"):
+    def __init__(self, api_key: str, limiter: VoyageLimiter, model: str = "voyage-multilingual-2"):
         self.client = voyageai.Client(api_key=api_key)
         self.model = model
-        self.total_tokens_used = 0
+        self.limiter = limiter
         self.request_count = 0
         logger.info(f"Voyage AI инициализирован: модель={model}")
 
@@ -32,6 +46,13 @@ class VoyageEmbeddingFunction(EmbeddingFunction):
         """Создаёт эмбеддинги для списка текстов."""
         if not input:
             return []
+
+        # Проверяем лимит ПЕРЕД запросом
+        if not self.limiter.can_make_request():
+            raise VoyageLimitExceeded(
+                "Лимит Voyage AI исчерпан! Бот остановлен для защиты от списаний. "
+                "Обратитесь к администратору."
+            )
 
         try:
             self.request_count += 1
@@ -43,29 +64,26 @@ class VoyageEmbeddingFunction(EmbeddingFunction):
                 input_type="document"
             )
 
-            # Логируем использование токенов
+            # Записываем использование токенов
             tokens_used = getattr(result, 'total_tokens', 0)
-            self.total_tokens_used += tokens_used
-            logger.info(f"Voyage API ответ: {len(result.embeddings)} эмбеддингов, "
-                       f"токенов={tokens_used}, всего={self.total_tokens_used}")
+            self.limiter.record_usage(tokens_used)
+
+            logger.info(f"Voyage API ответ: {len(result.embeddings)} эмбеддингов, токенов={tokens_used}")
 
             return result.embeddings
 
         except voyageai.error.RateLimitError as e:
-            error_msg = f"Voyage AI лимит превышен: {e}"
+            error_msg = f"Voyage AI rate limit: {e}"
             logger.error(error_msg)
             self._notify_admin(f"ВНИМАНИЕ! {error_msg}")
             raise
 
-        except voyageai.error.InvalidRequestError as e:
-            error_msg = f"Voyage AI ошибка запроса: {e}"
-            logger.error(error_msg)
+        except VoyageLimitExceeded:
             raise
 
         except Exception as e:
-            error_msg = f"Voyage AI неизвестная ошибка: {type(e).__name__}: {e}"
+            error_msg = f"Voyage AI ошибка: {type(e).__name__}: {e}"
             logger.error(error_msg)
-            self._notify_admin(f"Ошибка Voyage AI: {error_msg}")
             raise
 
     def _notify_admin(self, message: str):
@@ -77,34 +95,43 @@ class VoyageEmbeddingFunction(EmbeddingFunction):
                 logger.error(f"Не удалось уведомить админа: {e}")
 
     def get_stats(self) -> dict:
-        """Возвращает статистику использования."""
+        """Возвращает статистику."""
+        limiter_stats = self.limiter.get_stats()
         return {
-            "total_tokens": self.total_tokens_used,
+            **limiter_stats,
             "request_count": self.request_count,
             "model": self.model
         }
 
 
 class VectorStore:
-    """Векторное хранилище с гибридным поиском (семантика + keyword)."""
+    """Векторное хранилище с гибридным поиском."""
 
     def __init__(self):
+        global _voyage_limiter
+
         self.client = chromadb.PersistentClient(path=str(CHROMA_DIR))
         self.chunks_by_id: Dict[str, Dict] = {}
 
-        # Voyage AI для эмбеддингов (вместо локальной модели - экономим 800MB RAM)
         if not VOYAGE_API_KEY:
-            raise ValueError("VOYAGE_API_KEY не задан! Добавьте в переменные окружения.")
+            raise ValueError("VOYAGE_API_KEY не задан!")
 
+        # Создаём лимитер
+        _voyage_limiter = VoyageLimiter(DATA_DIR)
+        if _admin_notify_callback:
+            _voyage_limiter.set_notify_callback(_admin_notify_callback)
+
+        # Voyage AI с лимитером
         self.embedding_fn = VoyageEmbeddingFunction(
             api_key=VOYAGE_API_KEY,
-            model="voyage-multilingual-2"  # Лучшая модель для русского
+            limiter=_voyage_limiter,
+            model="voyage-multilingual-2"
         )
 
         # Пробуем получить существующую коллекцию
         try:
             self.collection = self.client.get_collection(
-                name="books_voyage",  # Новое имя - эмбеддинги несовместимы со старыми
+                name="books_voyage",
                 embedding_function=self.embedding_fn
             )
             count = self.collection.count()
@@ -117,7 +144,7 @@ class VectorStore:
         if ENABLE_HYBRID_SEARCH:
             self._load_chunks_for_keyword_search()
         else:
-            logger.info("Гибридный поиск отключён (ENABLE_HYBRID_SEARCH=false)")
+            logger.info("Гибридный поиск отключён")
 
     def _load_chunks_for_keyword_search(self):
         """Загружает чанки из ChromaDB для keyword поиска."""
@@ -158,7 +185,7 @@ class VectorStore:
 
         logger.info(f"Индексация {len(chunks)} чанков через Voyage AI...")
 
-        batch_size = 50  # Voyage рекомендует меньшие батчи
+        batch_size = 50
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i:i + batch_size]
             self.collection.add(
@@ -169,7 +196,6 @@ class VectorStore:
             logger.info(f"  Проиндексировано: {min(i + batch_size, len(chunks))}/{len(chunks)}")
 
         logger.info(f"Индексация завершена: {self.collection.count()} документов")
-        logger.info(f"Voyage AI статистика: {self.embedding_fn.get_stats()}")
 
     def _extract_keywords(self, query: str) -> List[str]:
         """Извлекает ключевые слова из запроса."""
@@ -211,11 +237,18 @@ class VectorStore:
         return found[:n_results]
 
     def search(self, query: str, n_results: int = TOP_K_RESULTS) -> List[Dict]:
-        """Поиск: семантика + keyword (если включён гибридный режим)."""
+        """Поиск: семантика + keyword."""
         if self.collection.count() == 0:
             return []
 
-        # 1. Семантический поиск через Voyage AI
+        # Проверяем лимит
+        if _voyage_limiter and not _voyage_limiter.can_make_request():
+            logger.error("Voyage лимит исчерпан, используем только keyword поиск")
+            if ENABLE_HYBRID_SEARCH:
+                return self._keyword_search(query, n_results)
+            return []
+
+        # Семантический поиск
         search_count = n_results * 2 if ENABLE_HYBRID_SEARCH else n_results
 
         try:
@@ -223,9 +256,13 @@ class VectorStore:
                 query_texts=[query],
                 n_results=search_count
             )
+        except VoyageLimitExceeded:
+            logger.warning("Voyage лимит достигнут во время поиска")
+            if ENABLE_HYBRID_SEARCH:
+                return self._keyword_search(query, n_results)
+            return []
         except Exception as e:
             logger.error(f"Ошибка семантического поиска: {e}")
-            # При ошибке Voyage пробуем только keyword поиск
             if ENABLE_HYBRID_SEARCH:
                 return self._keyword_search(query, n_results)
             return []
@@ -245,13 +282,12 @@ class VectorStore:
                         "source": "semantic"
                     }
 
-        # Если гибридный поиск выключен
         if not ENABLE_HYBRID_SEARCH:
             results = list(semantic_found.values())
             results.sort(key=lambda x: x['score'], reverse=True)
             return results[:n_results]
 
-        # 2. Keyword поиск
+        # Keyword поиск
         keyword_results = self._keyword_search(query, n_results * 2)
 
         keyword_found = {}
@@ -265,7 +301,7 @@ class VectorStore:
                     "source": "keyword"
                 }
 
-        # 3. Объединяем результаты
+        # Объединяем
         all_ids: Set[str] = set(semantic_found.keys()) | set(keyword_found.keys())
 
         combined = []
