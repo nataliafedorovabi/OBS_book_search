@@ -129,10 +129,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     relevant_chunks = vector_store.search(question)
     is_expanded = False
 
+    # Логируем результаты первого поиска
+    if relevant_chunks:
+        top_scores = [f"{c.get('score', 0):.2f}" for c in relevant_chunks[:3]]
+        logger.info(f"Первый поиск: {len(relevant_chunks)} чанков, scores={top_scores}")
+    else:
+        logger.info("Первый поиск: ничего не найдено")
+
     # 2. Если результатов мало или score низкий — расширяем запрос
+    # Порог 0.5 - нужен хороший match, иначе расширяем
     has_good_results = (
         relevant_chunks and
-        any(c.get('score', 0) >= 0.3 for c in relevant_chunks)
+        any(c.get('score', 0) >= 0.5 for c in relevant_chunks)
     )
 
     if not has_good_results:
