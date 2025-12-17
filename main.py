@@ -10,6 +10,8 @@ from src.handlers import (
     help_command,
     status_command,
     usage_command,
+    voyage_command,
+    voyage_reset_command,
     handle_message
 )
 
@@ -54,6 +56,8 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("usage", usage_command))
+    application.add_handler(CommandHandler("voyage", voyage_command))
+    application.add_handler(CommandHandler("voyage_reset", voyage_reset_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Запускаем бота
