@@ -141,12 +141,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Расширяем запрос через LLM
         expanded = llm_client.expand_query(question)
         search_terms = expanded.get('search_terms', [])
+        target_chapters = expanded.get('chapters', [])
+
+        logger.info(f"Расширение: главы={target_chapters}, термины={search_terms}")
 
         if search_terms:
-            # Ищем по каждому термину и объединяем результаты
+            # Ищем по каждому термину В УКАЗАННЫХ ГЛАВАХ
             all_chunks = {}
             for term in search_terms:
-                chunks = vector_store.search(term, n_results=3)
+                # Передаём главы для фильтрации
+                chunks = vector_store.search(term, n_results=3, chapters=target_chapters if target_chapters else None)
                 for chunk in chunks:
                     chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
                     if chunk_id not in all_chunks or chunk['score'] > all_chunks[chunk_id]['score']:

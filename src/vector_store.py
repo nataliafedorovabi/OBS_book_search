@@ -214,14 +214,33 @@ class VectorStore:
         keywords = [w for w in words if len(w) > 3 and w not in stop_words]
         return keywords
 
-    def _keyword_search(self, query: str, n_results: int = 10) -> List[Dict]:
-        """Поиск по ключевым словам."""
+    def _keyword_search(self, query: str, n_results: int = 10, chapters: List[str] = None) -> List[Dict]:
+        """Поиск по ключевым словам.
+
+        Args:
+            query: Поисковый запрос
+            n_results: Количество результатов
+            chapters: Список глав для фильтрации (опционально)
+        """
         keywords = self._extract_keywords(query)
         if not keywords:
             return []
 
+        # Извлекаем номера глав для фильтрации
+        chapter_prefixes = []
+        if chapters:
+            for ch in chapters:
+                if ". " in ch:
+                    chapter_prefixes.append(ch.split(". ")[0])  # "Глава 6"
+
         found = []
         for chunk_id, chunk in self.chunks_by_id.items():
+            # Фильтр по главам
+            if chapter_prefixes:
+                chunk_chapter = chunk['metadata'].get('chapter', '')
+                if not any(prefix in chunk_chapter for prefix in chapter_prefixes):
+                    continue
+
             text_lower = chunk['text'].lower()
             matches = sum(1 for kw in keywords if kw in text_lower)
             if matches > 0:
@@ -236,8 +255,14 @@ class VectorStore:
         found.sort(key=lambda x: x['keyword_matches'], reverse=True)
         return found[:n_results]
 
-    def search(self, query: str, n_results: int = TOP_K_RESULTS) -> List[Dict]:
-        """Поиск: семантика + keyword."""
+    def search(self, query: str, n_results: int = TOP_K_RESULTS, chapters: List[str] = None) -> List[Dict]:
+        """Поиск: семантика + keyword.
+
+        Args:
+            query: Поисковый запрос
+            n_results: Количество результатов
+            chapters: Список глав для фильтрации (опционально)
+        """
         if self.collection.count() == 0:
             return []
 
@@ -245,17 +270,30 @@ class VectorStore:
         if _voyage_limiter and not _voyage_limiter.can_make_request():
             logger.error("Voyage лимит исчерпан, используем только keyword поиск")
             if ENABLE_HYBRID_SEARCH:
-                return self._keyword_search(query, n_results)
+                return self._keyword_search(query, n_results, chapters)
             return []
 
         # Семантический поиск
         search_count = n_results * 2 if ENABLE_HYBRID_SEARCH else n_results
 
+        # Формируем фильтр по главам если указаны
+        where_filter = None
+        if chapters:
+            # ChromaDB where filter для поиска в указанных главах
+            chapter_conditions = [{"chapter": {"$contains": ch.split(". ")[0]}} for ch in chapters if ". " in ch]
+            if chapter_conditions:
+                where_filter = {"$or": chapter_conditions} if len(chapter_conditions) > 1 else chapter_conditions[0]
+                logger.info(f"Фильтр по главам: {[ch.split('. ')[0] for ch in chapters if '. ' in ch]}")
+
         try:
-            semantic_results = self.collection.query(
-                query_texts=[query],
-                n_results=search_count
-            )
+            query_params = {
+                "query_texts": [query],
+                "n_results": search_count
+            }
+            if where_filter:
+                query_params["where"] = where_filter
+
+            semantic_results = self.collection.query(**query_params)
         except VoyageLimitExceeded:
             logger.warning("Voyage лимит достигнут во время поиска")
             if ENABLE_HYBRID_SEARCH:
