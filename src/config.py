@@ -13,6 +13,7 @@ CHROMA_DIR = DATA_DIR / "chroma_db"
 # Токены (из переменных окружения Railway)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+VOYAGE_API_KEY = os.getenv("VOYAGE_API_KEY")  # Для эмбеддингов (экономит RAM)
 
 # Настройки чанков
 CHUNK_SIZE = 700  # символов в одном чанке

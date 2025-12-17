@@ -1,23 +1,60 @@
+import asyncio
+import logging
 from telegram import Update
-from telegram.ext import ContextTypes
-from src.vector_store import VectorStore
+from telegram.ext import ContextTypes, Application
+from src.vector_store import VectorStore, set_admin_notify_callback
 from src.llm import LLMClient
 from src.rate_limiter import RateLimiter
 from src.config import ADMIN_TELEGRAM_IDS
 
+logger = logging.getLogger(__name__)
 
 # Глобальные объекты (инициализируются в main.py)
 vector_store: VectorStore = None
 llm_client: LLMClient = None
 rate_limiter: RateLimiter = None
+_bot_app: Application = None  # Для отправки уведомлений
 
 
-def init_services(vs: VectorStore, llm: LLMClient):
+def init_services(vs: VectorStore, llm: LLMClient, app: Application = None):
     """Инициализация сервисов."""
-    global vector_store, llm_client, rate_limiter
+    global vector_store, llm_client, rate_limiter, _bot_app
     vector_store = vs
     llm_client = llm
     rate_limiter = RateLimiter()
+    _bot_app = app
+
+    # Настраиваем callback для уведомлений админа о проблемах с Voyage AI
+    set_admin_notify_callback(_send_admin_notification)
+    logger.info("Callback для уведомлений админа настроен")
+
+
+def _send_admin_notification(message: str):
+    """Синхронная обёртка для отправки уведомлений админам."""
+    if not ADMIN_TELEGRAM_IDS or not _bot_app:
+        logger.warning(f"Не удалось отправить уведомление: {message}")
+        return
+
+    async def _send():
+        for admin_id in ADMIN_TELEGRAM_IDS:
+            try:
+                await _bot_app.bot.send_message(
+                    chat_id=admin_id,
+                    text=f"🚨 {message}"
+                )
+                logger.info(f"Уведомление отправлено админу {admin_id}")
+            except Exception as e:
+                logger.error(f"Ошибка отправки уведомления админу {admin_id}: {e}")
+
+    # Запускаем асинхронную отправку
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(_send())
+        else:
+            loop.run_until_complete(_send())
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления: {e}")
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -124,9 +161,15 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     usage = rate_limiter.get_usage_info()
+    voyage_stats = vector_store.get_embedding_stats() if vector_store else {}
+
     await update.message.reply_text(
-        f"Статистика за {usage['date']}:\n\n"
+        f"📊 Статистика за {usage['date']}:\n\n"
         f"Запросов: {usage['requests_today']}/{usage['limit']}\n"
         f"Использовано: {usage['percent_used']}%\n"
-        f"Осталось: {usage['remaining']}"
+        f"Осталось: {usage['remaining']}\n\n"
+        f"🔍 Voyage AI (эмбеддинги):\n"
+        f"Запросов: {voyage_stats.get('request_count', 0)}\n"
+        f"Токенов: {voyage_stats.get('total_tokens', 0)}\n"
+        f"Модель: {voyage_stats.get('model', 'N/A')}"
     )
