@@ -136,12 +136,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         logger.info("Первый поиск: ничего не найдено")
 
-    # 2. Если результатов мало или score низкий — расширяем запрос
-    # Порог 0.5 - нужен хороший match, иначе расширяем
-    has_good_results = (
-        relevant_chunks and
-        any(c.get('score', 0) >= 0.5 for c in relevant_chunks)
-    )
+    # 2. Проверяем качество результатов
+    # Условие: высокий score И ключевые слова запроса есть в найденных чанках
+    def check_keyword_match(query: str, chunks: list) -> bool:
+        """Проверяет, содержат ли чанки ключевые слова из запроса."""
+        import re
+        # Извлекаем значимые слова (>4 букв, не стоп-слова)
+        stop = {'найди', 'покажи', 'расскажи', 'модель', 'какой', 'какая', 'какие', 'который'}
+        words = re.findall(r'[а-яёa-z]{5,}', query.lower())
+        keywords = [w for w in words if w not in stop]
+
+        if not keywords:
+            return True  # Нет ключевых слов для проверки
+
+        # Проверяем есть ли хотя бы одно ключевое слово в чанках
+        all_text = ' '.join(c.get('text', '').lower() for c in chunks)
+        matches = sum(1 for kw in keywords if kw in all_text)
+        match_ratio = matches / len(keywords) if keywords else 0
+
+        logger.info(f"Проверка ключевых слов: {keywords} -> совпадений {matches}/{len(keywords)} ({match_ratio:.0%})")
+        return match_ratio >= 0.5  # Хотя бы половина слов должна быть
+
+    has_good_score = relevant_chunks and any(c.get('score', 0) >= 0.5 for c in relevant_chunks)
+    has_keyword_match = check_keyword_match(question, relevant_chunks) if relevant_chunks else False
+
+    has_good_results = has_good_score and has_keyword_match
+
+    if not has_keyword_match and has_good_score:
+        logger.info("Score высокий, но ключевые слова не найдены - форсируем расширение")
 
     if not has_good_results:
         logger.info(f"Прямой поиск не дал хороших результатов, расширяем запрос")
