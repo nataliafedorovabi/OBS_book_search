@@ -43,11 +43,11 @@ def main():
     logger.info("Инициализация LLM клиента...")
     llm_client = LLMClient()
 
-    # Передаём сервисы в обработчики
-    init_services(vector_store, llm_client)
-
     # Создаём приложение бота
     application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # Передаём сервисы в обработчики (включая app для уведомлений)
+    init_services(vector_store, llm_client, application)
 
     # Регистрируем обработчики
     application.add_handler(CommandHandler("start", start_command))
