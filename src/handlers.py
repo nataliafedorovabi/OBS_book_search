@@ -125,11 +125,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         action="typing"
     )
 
-    # Ищем релевантные фрагменты
+    # 1. Сначала обычный поиск
     relevant_chunks = vector_store.search(question)
+    is_expanded = False
+
+    # 2. Если результатов мало или score низкий — расширяем запрос
+    has_good_results = (
+        relevant_chunks and
+        any(c.get('score', 0) >= 0.3 for c in relevant_chunks)
+    )
+
+    if not has_good_results:
+        logger.info(f"Прямой поиск не дал хороших результатов, расширяем запрос")
+
+        # Расширяем запрос через LLM
+        expanded = llm_client.expand_query(question)
+        search_terms = expanded.get('search_terms', [])
+
+        if search_terms:
+            # Ищем по каждому термину и объединяем результаты
+            all_chunks = {}
+            for term in search_terms:
+                chunks = vector_store.search(term, n_results=3)
+                for chunk in chunks:
+                    chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
+                    if chunk_id not in all_chunks or chunk['score'] > all_chunks[chunk_id]['score']:
+                        all_chunks[chunk_id] = chunk
+
+            # Сортируем по score
+            relevant_chunks = sorted(all_chunks.values(), key=lambda x: x['score'], reverse=True)[:5]
+            is_expanded = True
+            logger.info(f"Расширенный поиск нашёл {len(relevant_chunks)} чанков")
 
     # Генерируем ответ через LLM
-    answer = llm_client.generate_answer(question, relevant_chunks)
+    answer = llm_client.generate_answer(question, relevant_chunks, is_expanded_search=is_expanded)
 
     # Записываем запрос
     rate_limiter.record_request()
