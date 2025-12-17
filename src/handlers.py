@@ -155,7 +155,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         match_ratio = matches / len(keywords) if keywords else 0
 
         logger.info(f"Проверка ключевых слов: {keywords} -> совпадений {matches}/{len(keywords)} ({match_ratio:.0%})")
-        return match_ratio >= 0.5  # Хотя бы половина слов должна быть
+        return match_ratio > 0.5  # Больше половины слов должно быть
 
     has_good_score = relevant_chunks and any(c.get('score', 0) >= 0.5 for c in relevant_chunks)
     has_keyword_match = check_keyword_match(question, relevant_chunks) if relevant_chunks else False
