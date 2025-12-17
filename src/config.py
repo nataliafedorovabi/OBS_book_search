@@ -19,13 +19,16 @@ CHUNK_SIZE = 700  # символов в одном чанке
 CHUNK_OVERLAP = 100  # перекрытие между чанками
 
 # Настройки поиска
-TOP_K_RESULTS = 5  # количество релевантных фрагментов
+TOP_K_RESULTS = 3  # количество релевантных фрагментов (снижено для экономии токенов)
 MIN_RELEVANCE_SCORE = 0.15  # минимальный порог релевантности (0-1)
 
+# Гибридный поиск (keyword + semantic). Отключить для экономии RAM
+ENABLE_HYBRID_SEARCH = os.getenv("ENABLE_HYBRID_SEARCH", "true").lower() == "true"
+
 # Модель LLM (OpenRouter)
-# Бесплатные: google/gemini-2.0-flash-exp:free, meta-llama/llama-3.1-8b-instruct:free
+# Бесплатные: meta-llama/llama-3.2-3b-instruct:free, qwen/qwen-2.5-7b-instruct:free
 # Платные: anthropic/claude-3.5-sonnet, openai/gpt-4o-mini
-LLM_MODEL = os.getenv("LLM_MODEL", "google/gemini-2.0-flash-exp:free")
+LLM_MODEL = os.getenv("LLM_MODEL", "meta-llama/llama-3.2-3b-instruct:free")
 
 # Лимиты запросов
 DAILY_REQUEST_LIMIT = 500  # запросов в день
