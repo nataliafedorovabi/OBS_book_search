@@ -156,31 +156,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = llm_client.generate_answer(question, context_chunks, is_expanded_search=True)
     rate_limiter.record_request()
 
-    # Сохраняем контекст для кнопок
-    user_id = update.effective_user.id
-    _search_context[user_id] = {
-        'query': question,
-        'results': results,
-        'chapters': chapters_found
-    }
-
-    # Создаём кнопки по главам
-    keyboard = []
-    for i, (ch_title, ch_data) in enumerate(list(chapters_found.items())[:3]):
-        # Формат: "Гл.6 Понимание людей"
-        if '. ' in ch_title:
-            parts = ch_title.split('. ', 1)
-            num = parts[0].replace('Глава ', 'Гл.')
-            name = parts[1][:18] + '...' if len(parts[1]) > 18 else parts[1]
-            btn_text = f"📖 {num} {name}"
-        else:
-            btn_text = f"📖 {ch_title[:25]}"
-        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"chapter_{i}")])
-
-    keyboard.append([InlineKeyboardButton("🔍 Искать ещё", callback_data="search_more")])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(answer, reply_markup=reply_markup)
+    await update.message.reply_text(answer, parse_mode="Markdown")
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -155,11 +155,16 @@ class LLMClient:
         # Формируем контекст
         context_parts = []
         for i, chunk in enumerate(context_chunks, 1):
-            book = chunk["metadata"].get("book_title", chunk["metadata"].get("book", "Книга"))
+            book_raw = chunk["metadata"].get("book_title", chunk["metadata"].get("book", ""))
+            # Преобразуем R628_book1 → Часть 1
+            book_num = book_raw.replace("R628_book", "") if "R628_book" in book_raw else ""
+            book = f"Часть {book_num}" if book_num else "Книга"
+
             chapter = chunk["metadata"].get("chapter", "")
             section = chunk["metadata"].get("section", "")
             text = chunk["text"]
-            location = f"{chapter}"
+
+            location = f"{book}, {chapter}"
             if section:
                 location += f", {section}"
             context_parts.append(f"[Фрагмент {i} | {location}]\n{text}")
