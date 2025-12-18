@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from telegram import Update
+from typing import Dict, List, Any
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, Application
 from src.vector_store import VectorStore, set_admin_notify_callback, get_voyage_limiter
 from src.llm import LLMClient
@@ -14,6 +15,9 @@ vector_store: VectorStore = None
 llm_client: LLMClient = None
 rate_limiter: RateLimiter = None
 _bot_app: Application = None  # Для отправки уведомлений
+
+# Хранение контекста поиска для кнопок (user_id -> context)
+_search_context: Dict[int, Dict[str, Any]] = {}
 
 
 def init_services(vs: VectorStore, llm: LLMClient, app: Application = None):
@@ -175,21 +179,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.info(f"Расширение: главы={target_chapters}, термины={search_terms}")
 
-        if search_terms:
-            # Ищем по каждому термину В УКАЗАННЫХ ГЛАВАХ
+        if search_terms and target_chapters:
+            # УМНЫЙ ПОИСК: ищем в КАЖДОЙ главе отдельно
+            all_chunks = {}
+            chapters_found = set()
+
+            for chapter in target_chapters:
+                chapter_chunks = {}
+                for term in search_terms:
+                    # Ищем этот термин в конкретной главе
+                    chunks = vector_store.search(term, n_results=2, chapters=[chapter])
+                    for chunk in chunks:
+                        chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
+                        if chunk_id not in chapter_chunks or chunk['score'] > chapter_chunks[chunk_id]['score']:
+                            chapter_chunks[chunk_id] = chunk
+
+                # Берём лучший результат из этой главы
+                if chapter_chunks:
+                    best_from_chapter = sorted(chapter_chunks.values(), key=lambda x: x['score'], reverse=True)[:2]
+                    for chunk in best_from_chapter:
+                        chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
+                        all_chunks[chunk_id] = chunk
+                        chapters_found.add(chapter.split('.')[0] if '.' in chapter else chapter)
+
+            logger.info(f"Найдено из глав: {chapters_found}")
+
+            # Сортируем по score, берём топ результаты
+            relevant_chunks = sorted(all_chunks.values(), key=lambda x: x['score'], reverse=True)[:6]
+            is_expanded = True
+            logger.info(f"Расширенный поиск нашёл {len(relevant_chunks)} чанков из {len(chapters_found)} глав")
+
+        elif search_terms:
+            # Fallback: если глав нет, ищем просто по терминам
             all_chunks = {}
             for term in search_terms:
-                # Передаём главы для фильтрации
-                chunks = vector_store.search(term, n_results=3, chapters=target_chapters if target_chapters else None)
+                chunks = vector_store.search(term, n_results=3)
                 for chunk in chunks:
                     chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
                     if chunk_id not in all_chunks or chunk['score'] > all_chunks[chunk_id]['score']:
                         all_chunks[chunk_id] = chunk
 
-            # Сортируем по score
             relevant_chunks = sorted(all_chunks.values(), key=lambda x: x['score'], reverse=True)[:5]
             is_expanded = True
-            logger.info(f"Расширенный поиск нашёл {len(relevant_chunks)} чанков")
+            logger.info(f"Расширенный поиск (без глав) нашёл {len(relevant_chunks)} чанков")
 
     # Генерируем ответ через LLM
     answer = llm_client.generate_answer(question, relevant_chunks, is_expanded_search=is_expanded)
@@ -212,7 +244,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         rate_limiter.mark_warning_sent()
 
-    await update.message.reply_text(answer)
+    # Группируем чанки по главам для кнопок
+    chapters_in_results = {}
+    for chunk in relevant_chunks:
+        chapter = chunk.get('metadata', {}).get('chapter', 'Без главы')
+        if chapter not in chapters_in_results:
+            chapters_in_results[chapter] = []
+        chapters_in_results[chapter].append(chunk)
+
+    # Сохраняем контекст поиска
+    user_id = update.effective_user.id
+    _search_context[user_id] = {
+        'query': question,
+        'chunks': relevant_chunks,
+        'chapters': chapters_in_results,
+        'is_expanded': is_expanded,
+        'search_depth': 1  # Уровень глубины поиска
+    }
+
+    # Создаём кнопки
+    keyboard = []
+
+    # Кнопки "Подробнее" для каждой главы (если несколько глав)
+    if len(chapters_in_results) > 1:
+        for i, chapter in enumerate(list(chapters_in_results.keys())[:3]):
+            short_name = chapter.split('. ')[1][:20] + '...' if '. ' in chapter and len(chapter.split('. ')[1]) > 20 else chapter.split('. ')[1] if '. ' in chapter else chapter[:25]
+            keyboard.append([InlineKeyboardButton(f"📖 {short_name}", callback_data=f"chapter_{i}")])
+
+    # Кнопка "Искал другое"
+    keyboard.append([InlineKeyboardButton("🔄 Искал другое", callback_data="search_other")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+
+    await update.message.reply_text(answer, reply_markup=reply_markup)
 
 
 async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -305,3 +369,120 @@ async def voyage_reset_command(update: Update, context: ContextTypes.DEFAULT_TYP
             f"• Вы пополнили баланс Voyage AI\n\n"
             f"Для подтверждения: /voyage_reset CONFIRM"
         )
+
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик нажатий на inline кнопки."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    search_ctx = _search_context.get(user_id)
+
+    if not search_ctx:
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text("Контекст поиска устарел. Задайте вопрос заново.")
+        return
+
+    callback_data = query.data
+
+    if callback_data.startswith("chapter_"):
+        # Нажали на кнопку главы - показываем подробнее
+        chapter_idx = int(callback_data.split("_")[1])
+        chapters_list = list(search_ctx['chapters'].keys())
+
+        if chapter_idx >= len(chapters_list):
+            await query.message.reply_text("Глава не найдена.")
+            return
+
+        chapter_name = chapters_list[chapter_idx]
+        chapter_chunks = search_ctx['chapters'][chapter_name]
+
+        # Ищем больше информации в этой главе
+        original_query = search_ctx['query']
+        logger.info(f"Углублённый поиск в главе: {chapter_name}")
+
+        # Показываем статус
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id,
+            action="typing"
+        )
+
+        # Ищем дополнительные чанки из этой главы
+        more_chunks = vector_store.search(original_query, n_results=5, chapters=[chapter_name])
+
+        if more_chunks:
+            # Генерируем расширенный ответ по главе
+            detailed_answer = llm_client.generate_answer(
+                f"{original_query} (подробнее из главы '{chapter_name}')",
+                more_chunks,
+                is_expanded_search=True
+            )
+            rate_limiter.record_request()
+
+            await query.message.reply_text(
+                f"📖 *Подробнее из {chapter_name}:*\n\n{detailed_answer}",
+                parse_mode="Markdown"
+            )
+        else:
+            await query.message.reply_text(f"Дополнительной информации в главе '{chapter_name}' не найдено.")
+
+    elif callback_data == "search_other":
+        # Нажали "Искал другое" - углубляем поиск
+        original_query = search_ctx['query']
+        search_depth = search_ctx.get('search_depth', 1)
+
+        if search_depth >= 3:
+            await query.message.reply_text(
+                "Поиск уже максимально расширен. Попробуйте переформулировать вопрос или задать его иначе."
+            )
+            return
+
+        logger.info(f"Расширяем поиск, глубина: {search_depth + 1}")
+
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id,
+            action="typing"
+        )
+
+        # Принудительно запускаем расширенный поиск
+        expanded = llm_client.expand_query(original_query)
+        search_terms = expanded.get('search_terms', [])
+        target_chapters = expanded.get('chapters', [])
+
+        # Ищем с большим количеством результатов
+        all_chunks = {}
+        for chapter in target_chapters:
+            for term in search_terms:
+                chunks = vector_store.search(term, n_results=4, chapters=[chapter])
+                for chunk in chunks:
+                    chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
+                    if chunk_id not in all_chunks or chunk['score'] > all_chunks[chunk_id]['score']:
+                        all_chunks[chunk_id] = chunk
+
+        # Исключаем уже показанные чанки
+        shown_ids = {c.get('metadata', {}).get('id') for c in search_ctx['chunks']}
+        new_chunks = [c for c in all_chunks.values() if c.get('metadata', {}).get('id') not in shown_ids]
+        new_chunks = sorted(new_chunks, key=lambda x: x['score'], reverse=True)[:5]
+
+        if new_chunks:
+            answer = llm_client.generate_answer(original_query, new_chunks, is_expanded_search=True)
+            rate_limiter.record_request()
+
+            # Обновляем контекст
+            _search_context[user_id]['chunks'].extend(new_chunks)
+            _search_context[user_id]['search_depth'] = search_depth + 1
+
+            # Кнопка для ещё одного расширения
+            keyboard = [[InlineKeyboardButton("🔄 Ещё варианты", callback_data="search_other")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await query.message.reply_text(
+                f"🔍 *Дополнительные результаты:*\n\n{answer}",
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
+        else:
+            await query.message.reply_text(
+                "Других релевантных материалов не найдено. Попробуйте переформулировать вопрос."
+            )
