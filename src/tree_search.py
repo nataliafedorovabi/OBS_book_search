@@ -231,6 +231,16 @@ class TreeSearcher:
         """
         # Шаг 1: Понимаем вопрос
         keywords, recommended_chapters = self._understand_query(query)
+
+        # ВАЖНО: добавляем слова из оригинального вопроса (LLM может их пропустить)
+        query_words = re.findall(r'[а-яА-ЯёЁa-zA-Z]+', query.lower())
+        stop_words = {'что', 'как', 'где', 'когда', 'почему', 'какой', 'какая', 'какие',
+                     'это', 'такое', 'для', 'при', 'или', 'если', 'чем', 'между',
+                     'помню', 'была', 'скажи', 'искать', 'найти', 'покажи', 'расскажи'}
+        for word in query_words:
+            if word not in stop_words and len(word) > 2 and word not in [k.lower() for k in keywords]:
+                keywords.append(word)
+
         logger.info(f"Ключевые слова для поиска: {keywords}")
 
         # Извлекаем номера рекомендованных глав для бонуса
