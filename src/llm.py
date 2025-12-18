@@ -157,8 +157,12 @@ class LLMClient:
         for i, chunk in enumerate(context_chunks, 1):
             book = chunk["metadata"].get("book_title", chunk["metadata"].get("book", "Книга"))
             chapter = chunk["metadata"].get("chapter", "")
+            section = chunk["metadata"].get("section", "")
             text = chunk["text"]
-            context_parts.append(f"[Фрагмент {i} | {book}, {chapter}]\n{text}")
+            location = f"{chapter}"
+            if section:
+                location += f", {section}"
+            context_parts.append(f"[Фрагмент {i} | {location}]\n{text}")
 
         context = "\n\n---\n\n".join(context_parts)
 
