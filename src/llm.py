@@ -116,10 +116,13 @@ class LLMClient:
             logger.warning(f"Не удалось распарсить JSON: {e}, ответ: {result[:200]}")
             return {"chapters": [], "search_terms": [query]}
 
-    def understand_query(self, query: str) -> List[str]:
+    def understand_query(self, query: str) -> Dict:
         """
-        Анализирует вопрос и возвращает термины для поиска.
+        Анализирует вопрос и возвращает главы и термины для поиска.
         Используется для "сложных" вопросов, где нет известных терминов.
+
+        Returns:
+            {"chapters": [...], "search_terms": [...]}
         """
         logger.info(f"Анализ вопроса: {query}")
 
@@ -131,13 +134,13 @@ class LLMClient:
         result = self._call_llm(
             system_prompt="Ты помощник. Отвечай только JSON.",
             user_message=prompt,
-            max_tokens=150,
+            max_tokens=200,
             temperature=0.1
         )
 
         if not result:
             logger.warning("Не удалось проанализировать вопрос")
-            return [query]  # Возвращаем исходный вопрос
+            return {"chapters": [], "search_terms": [query]}
 
         try:
             result = result.strip()
@@ -147,12 +150,16 @@ class LLMClient:
                     result = result[4:]
 
             parsed = json.loads(result)
+            chapters = parsed.get('chapters', [])
             terms = parsed.get('search_terms', [query])
-            logger.info(f"Понял вопрос, искать: {terms}")
-            return terms if terms else [query]
+            logger.info(f"Понял вопрос: главы={chapters}, термины={terms}")
+            return {
+                "chapters": chapters,
+                "search_terms": terms if terms else [query]
+            }
         except json.JSONDecodeError as e:
             logger.warning(f"Не удалось распарсить JSON: {e}")
-            return [query]
+            return {"chapters": [], "search_terms": [query]}
 
     def _get_cache_key(self, question: str, chunks: List[Dict]) -> str:
         """Генерирует ключ кеша."""

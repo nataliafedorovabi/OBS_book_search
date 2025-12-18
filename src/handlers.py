@@ -138,19 +138,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Простой случай: известный термин → прямой поиск
         logger.info(f"Найден известный термин, прямой поиск")
         search_terms = [question]
+        target_chapters = []  # Искать везде
     else:
         # Сложный случай: сначала понимаем вопрос через LLM
         logger.info(f"Неизвестный термин, анализируем вопрос через LLM")
-        search_terms = llm_client.understand_query(question)
+        analysis = llm_client.understand_query(question)
+        target_chapters = analysis.get('chapters', [])
+        search_terms = analysis.get('search_terms', [question])
+        logger.info(f"LLM анализ: главы={target_chapters}, термины={search_terms}")
 
     # Поиск по терминам
     all_chunks = {}
-    for term in search_terms:
-        chunks = vector_store.search(term, n_results=3)
-        for chunk in chunks:
-            chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
-            if chunk_id not in all_chunks or chunk['score'] > all_chunks[chunk_id]['score']:
-                all_chunks[chunk_id] = chunk
+
+    if target_chapters:
+        # Ищем в КАЖДОЙ указанной главе отдельно, чтобы получить результаты из всех
+        for chapter in target_chapters:
+            for term in search_terms:
+                chunks = vector_store.search(term, n_results=2, chapters=[chapter])
+                for chunk in chunks:
+                    chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
+                    if chunk_id not in all_chunks or chunk['score'] > all_chunks[chunk_id]['score']:
+                        all_chunks[chunk_id] = chunk
+        logger.info(f"Поиск по {len(target_chapters)} главам: найдено {len(all_chunks)} уникальных чанков")
+    else:
+        # Простой поиск без фильтра по главам
+        for term in search_terms:
+            chunks = vector_store.search(term, n_results=3)
+            for chunk in chunks:
+                chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
+                if chunk_id not in all_chunks or chunk['score'] > all_chunks[chunk_id]['score']:
+                    all_chunks[chunk_id] = chunk
 
     relevant_chunks = sorted(all_chunks.values(), key=lambda x: x['score'], reverse=True)[:5]
     is_expanded = not has_known_term  # Помечаем если был анализ
@@ -202,14 +219,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Создаём кнопки
     keyboard = []
 
-    # Кнопки "Подробнее" для каждой главы (если несколько глав)
+    # Кнопки для каждой главы (показываем номер + краткое название)
     if len(chapters_in_results) > 1:
         for i, chapter in enumerate(list(chapters_in_results.keys())[:3]):
-            short_name = chapter.split('. ')[1][:20] + '...' if '. ' in chapter and len(chapter.split('. ')[1]) > 20 else chapter.split('. ')[1] if '. ' in chapter else chapter[:25]
-            keyboard.append([InlineKeyboardButton(f"📖 {short_name}", callback_data=f"chapter_{i}")])
+            # Формат: "Гл.6 Понимание людей"
+            if '. ' in chapter:
+                parts = chapter.split('. ', 1)
+                num = parts[0].replace('Глава ', 'Гл.')
+                name = parts[1][:18] + '...' if len(parts[1]) > 18 else parts[1]
+                btn_text = f"📖 {num} {name}"
+            else:
+                btn_text = f"📖 {chapter[:25]}"
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"chapter_{i}")])
 
     # Кнопка "Искал другое"
-    keyboard.append([InlineKeyboardButton("🔄 Искал другое", callback_data="search_other")])
+    keyboard.append([InlineKeyboardButton("🔍 Искать ещё", callback_data="search_other")])
 
     reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
 
