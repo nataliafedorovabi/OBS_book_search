@@ -276,24 +276,23 @@ class VectorStore:
         # Семантический поиск
         search_count = n_results * 2 if ENABLE_HYBRID_SEARCH else n_results
 
-        # Формируем фильтр по главам если указаны
-        where_filter = None
+        # Извлекаем префиксы глав для фильтрации (Глава 2, Глава 6, etc.)
+        chapter_prefixes = []
         if chapters:
-            # ChromaDB where filter для поиска в указанных главах
-            chapter_conditions = [{"chapter": {"$contains": ch.split(". ")[0]}} for ch in chapters if ". " in ch]
-            if chapter_conditions:
-                where_filter = {"$or": chapter_conditions} if len(chapter_conditions) > 1 else chapter_conditions[0]
-                logger.info(f"Фильтр по главам: {[ch.split('. ')[0] for ch in chapters if '. ' in ch]}")
+            for ch in chapters:
+                if ". " in ch:
+                    chapter_prefixes.append(ch.split(". ")[0])  # "Глава 6"
+            if chapter_prefixes:
+                logger.info(f"Фильтр по главам: {chapter_prefixes}")
 
         try:
-            query_params = {
-                "query_texts": [query],
-                "n_results": search_count
-            }
-            if where_filter:
-                query_params["where"] = where_filter
+            # Ищем больше результатов если есть фильтр (потом отфильтруем)
+            actual_search_count = search_count * 3 if chapter_prefixes else search_count
 
-            semantic_results = self.collection.query(**query_params)
+            semantic_results = self.collection.query(
+                query_texts=[query],
+                n_results=actual_search_count
+            )
         except VoyageLimitExceeded:
             logger.warning("Voyage лимит достигнут во время поиска")
             if ENABLE_HYBRID_SEARCH:
@@ -311,11 +310,18 @@ class VectorStore:
                 distance = semantic_results['distances'][0][i] if semantic_results.get('distances') else 0
                 score = 1 - distance
                 chunk_id = semantic_results['ids'][0][i]
+                metadata = semantic_results['metadatas'][0][i]
+
+                # Фильтр по главам (если указан)
+                if chapter_prefixes:
+                    chunk_chapter = metadata.get('chapter', '')
+                    if not any(prefix in chunk_chapter for prefix in chapter_prefixes):
+                        continue  # Пропускаем чанки из других глав
 
                 if score >= MIN_RELEVANCE_SCORE:
                     semantic_found[chunk_id] = {
                         "text": doc,
-                        "metadata": semantic_results['metadatas'][0][i],
+                        "metadata": metadata,
                         "score": score,
                         "source": "semantic"
                     }
@@ -325,8 +331,8 @@ class VectorStore:
             results.sort(key=lambda x: x['score'], reverse=True)
             return results[:n_results]
 
-        # Keyword поиск
-        keyword_results = self._keyword_search(query, n_results * 2)
+        # Keyword поиск (с тем же фильтром по главам)
+        keyword_results = self._keyword_search(query, n_results * 2, chapters)
 
         keyword_found = {}
         for item in keyword_results:

@@ -7,6 +7,7 @@ from src.vector_store import VectorStore, set_admin_notify_callback, get_voyage_
 from src.llm import LLMClient
 from src.rate_limiter import RateLimiter
 from src.config import ADMIN_TELEGRAM_IDS
+from src.chapters import KNOWN_TERMS
 
 logger = logging.getLogger(__name__)
 
@@ -129,99 +130,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         action="typing"
     )
 
-    # 1. Сначала обычный поиск
-    relevant_chunks = vector_store.search(question)
-    is_expanded = False
+    # Проверяем, есть ли известные термины в вопросе
+    question_lower = question.lower()
+    has_known_term = any(term in question_lower for term in KNOWN_TERMS)
 
-    # Логируем результаты первого поиска
+    if has_known_term:
+        # Простой случай: известный термин → прямой поиск
+        logger.info(f"Найден известный термин, прямой поиск")
+        search_terms = [question]
+    else:
+        # Сложный случай: сначала понимаем вопрос через LLM
+        logger.info(f"Неизвестный термин, анализируем вопрос через LLM")
+        search_terms = llm_client.understand_query(question)
+
+    # Поиск по терминам
+    all_chunks = {}
+    for term in search_terms:
+        chunks = vector_store.search(term, n_results=3)
+        for chunk in chunks:
+            chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
+            if chunk_id not in all_chunks or chunk['score'] > all_chunks[chunk_id]['score']:
+                all_chunks[chunk_id] = chunk
+
+    relevant_chunks = sorted(all_chunks.values(), key=lambda x: x['score'], reverse=True)[:5]
+    is_expanded = not has_known_term  # Помечаем если был анализ
+
+    # Логируем результаты
     if relevant_chunks:
         top_scores = [f"{c.get('score', 0):.2f}" for c in relevant_chunks[:3]]
-        logger.info(f"Первый поиск: {len(relevant_chunks)} чанков, scores={top_scores}")
-    else:
-        logger.info("Первый поиск: ничего не найдено")
-
-    # 2. Проверяем качество результатов
-    # Условие: высокий score И ключевые слова запроса есть в найденных чанках
-    def check_keyword_match(query: str, chunks: list) -> bool:
-        """Проверяет, содержат ли чанки ключевые слова из запроса."""
-        import re
-        # Извлекаем значимые слова (>4 букв, не стоп-слова)
-        stop = {'найди', 'покажи', 'расскажи', 'модель', 'какой', 'какая', 'какие', 'который'}
-        words = re.findall(r'[а-яёa-z]{5,}', query.lower())
-        keywords = [w for w in words if w not in stop]
-
-        if not keywords:
-            return True  # Нет ключевых слов для проверки
-
-        # Проверяем есть ли хотя бы одно ключевое слово в чанках
-        all_text = ' '.join(c.get('text', '').lower() for c in chunks)
-        matches = sum(1 for kw in keywords if kw in all_text)
-        match_ratio = matches / len(keywords) if keywords else 0
-
-        logger.info(f"Проверка ключевых слов: {keywords} -> совпадений {matches}/{len(keywords)} ({match_ratio:.0%})")
-        return match_ratio > 0.5  # Больше половины слов должно быть
-
-    has_good_score = relevant_chunks and any(c.get('score', 0) >= 0.5 for c in relevant_chunks)
-    has_keyword_match = check_keyword_match(question, relevant_chunks) if relevant_chunks else False
-
-    has_good_results = has_good_score and has_keyword_match
-
-    if not has_keyword_match and has_good_score:
-        logger.info("Score высокий, но ключевые слова не найдены - форсируем расширение")
-
-    if not has_good_results:
-        logger.info(f"Прямой поиск не дал хороших результатов, расширяем запрос")
-
-        # Расширяем запрос через LLM
-        expanded = llm_client.expand_query(question)
-        search_terms = expanded.get('search_terms', [])
-        target_chapters = expanded.get('chapters', [])
-
-        logger.info(f"Расширение: главы={target_chapters}, термины={search_terms}")
-
-        if search_terms and target_chapters:
-            # УМНЫЙ ПОИСК: ищем в КАЖДОЙ главе отдельно
-            all_chunks = {}
-            chapters_found = set()
-
-            for chapter in target_chapters:
-                chapter_chunks = {}
-                for term in search_terms:
-                    # Ищем этот термин в конкретной главе
-                    chunks = vector_store.search(term, n_results=2, chapters=[chapter])
-                    for chunk in chunks:
-                        chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
-                        if chunk_id not in chapter_chunks or chunk['score'] > chapter_chunks[chunk_id]['score']:
-                            chapter_chunks[chunk_id] = chunk
-
-                # Берём лучший результат из этой главы
-                if chapter_chunks:
-                    best_from_chapter = sorted(chapter_chunks.values(), key=lambda x: x['score'], reverse=True)[:2]
-                    for chunk in best_from_chapter:
-                        chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
-                        all_chunks[chunk_id] = chunk
-                        chapters_found.add(chapter.split('.')[0] if '.' in chapter else chapter)
-
-            logger.info(f"Найдено из глав: {chapters_found}")
-
-            # Сортируем по score, берём топ результаты
-            relevant_chunks = sorted(all_chunks.values(), key=lambda x: x['score'], reverse=True)[:6]
-            is_expanded = True
-            logger.info(f"Расширенный поиск нашёл {len(relevant_chunks)} чанков из {len(chapters_found)} глав")
-
-        elif search_terms:
-            # Fallback: если глав нет, ищем просто по терминам
-            all_chunks = {}
-            for term in search_terms:
-                chunks = vector_store.search(term, n_results=3)
-                for chunk in chunks:
-                    chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
-                    if chunk_id not in all_chunks or chunk['score'] > all_chunks[chunk_id]['score']:
-                        all_chunks[chunk_id] = chunk
-
-            relevant_chunks = sorted(all_chunks.values(), key=lambda x: x['score'], reverse=True)[:5]
-            is_expanded = True
-            logger.info(f"Расширенный поиск (без глав) нашёл {len(relevant_chunks)} чанков")
+        logger.info(f"Поиск: {len(relevant_chunks)} чанков, scores={top_scores}")
 
     # Генерируем ответ через LLM
     answer = llm_client.generate_answer(question, relevant_chunks, is_expanded_search=is_expanded)
@@ -428,33 +365,49 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(f"Дополнительной информации в главе '{chapter_name}' не найдено.")
 
     elif callback_data == "search_other":
-        # Нажали "Искал другое" - углубляем поиск
+        # Нажали "Искал другое" - делаем УМНЫЙ расширенный поиск
         original_query = search_ctx['query']
         search_depth = search_ctx.get('search_depth', 1)
 
         if search_depth >= 3:
             await query.message.reply_text(
-                "Поиск уже максимально расширен. Попробуйте переформулировать вопрос или задать его иначе."
+                "Поиск уже максимально расширен. Попробуйте переформулировать вопрос."
             )
             return
 
-        logger.info(f"Расширяем поиск, глубина: {search_depth + 1}")
+        logger.info(f"Расширяем поиск через LLM, глубина: {search_depth + 1}")
 
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id,
             action="typing"
         )
 
-        # Принудительно запускаем расширенный поиск
+        # Расширяем запрос через LLM (ищет связанные термины и главы)
         expanded = llm_client.expand_query(original_query)
         search_terms = expanded.get('search_terms', [])
         target_chapters = expanded.get('chapters', [])
 
-        # Ищем с большим количеством результатов
+        logger.info(f"LLM предложил: главы={target_chapters}, термины={search_terms}")
+
+        # Ищем в каждой главе отдельно
         all_chunks = {}
-        for chapter in target_chapters:
+        chapters_found = set()
+
+        if search_terms and target_chapters:
+            for chapter in target_chapters:
+                for term in search_terms:
+                    chunks = vector_store.search(term, n_results=3, chapters=[chapter])
+                    for chunk in chunks:
+                        chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
+                        if chunk_id not in all_chunks or chunk['score'] > all_chunks[chunk_id]['score']:
+                            all_chunks[chunk_id] = chunk
+                            ch_name = chunk.get('metadata', {}).get('chapter', '')
+                            if ch_name:
+                                chapters_found.add(ch_name.split('.')[0] if '.' in ch_name else ch_name)
+        elif search_terms:
+            # Если глав нет - ищем по терминам везде
             for term in search_terms:
-                chunks = vector_store.search(term, n_results=4, chapters=[chapter])
+                chunks = vector_store.search(term, n_results=3)
                 for chunk in chunks:
                     chunk_id = chunk.get('metadata', {}).get('id', id(chunk))
                     if chunk_id not in all_chunks or chunk['score'] > all_chunks[chunk_id]['score']:
@@ -463,7 +416,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Исключаем уже показанные чанки
         shown_ids = {c.get('metadata', {}).get('id') for c in search_ctx['chunks']}
         new_chunks = [c for c in all_chunks.values() if c.get('metadata', {}).get('id') not in shown_ids]
-        new_chunks = sorted(new_chunks, key=lambda x: x['score'], reverse=True)[:5]
+        new_chunks = sorted(new_chunks, key=lambda x: x['score'], reverse=True)[:6]
+
+        logger.info(f"Расширенный поиск: {len(new_chunks)} новых чанков из глав {chapters_found}")
 
         if new_chunks:
             answer = llm_client.generate_answer(original_query, new_chunks, is_expanded_search=True)
@@ -478,11 +433,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             await query.message.reply_text(
-                f"🔍 *Дополнительные результаты:*\n\n{answer}",
-                parse_mode="Markdown",
+                f"{answer}",
                 reply_markup=reply_markup
             )
         else:
             await query.message.reply_text(
-                "Других релевантных материалов не найдено. Попробуйте переформулировать вопрос."
+                "Других материалов не найдено. Попробуйте переформулировать вопрос."
             )

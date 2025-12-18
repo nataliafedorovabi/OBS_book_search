@@ -7,7 +7,8 @@ from typing import List, Dict, Optional
 from src.config import OPENROUTER_API_KEY, LLM_MODEL, MIN_RELEVANCE_SCORE
 from src.prompts import (
     SYSTEM_PROMPT, SYSTEM_PROMPT_WITH_ALTERNATIVES,
-    EXPAND_QUERY_PROMPT, NO_CONTEXT_RESPONSE, LOW_RELEVANCE_RESPONSE
+    EXPAND_QUERY_PROMPT, UNDERSTAND_QUERY_PROMPT,
+    NO_CONTEXT_RESPONSE, LOW_RELEVANCE_RESPONSE
 )
 from src.chapters import CHAPTERS_INFO
 
@@ -114,6 +115,44 @@ class LLMClient:
         except json.JSONDecodeError as e:
             logger.warning(f"Не удалось распарсить JSON: {e}, ответ: {result[:200]}")
             return {"chapters": [], "search_terms": [query]}
+
+    def understand_query(self, query: str) -> List[str]:
+        """
+        Анализирует вопрос и возвращает термины для поиска.
+        Используется для "сложных" вопросов, где нет известных терминов.
+        """
+        logger.info(f"Анализ вопроса: {query}")
+
+        prompt = UNDERSTAND_QUERY_PROMPT.format(
+            chapters_info=CHAPTERS_INFO,
+            query=query
+        )
+
+        result = self._call_llm(
+            system_prompt="Ты помощник. Отвечай только JSON.",
+            user_message=prompt,
+            max_tokens=150,
+            temperature=0.1
+        )
+
+        if not result:
+            logger.warning("Не удалось проанализировать вопрос")
+            return [query]  # Возвращаем исходный вопрос
+
+        try:
+            result = result.strip()
+            if result.startswith("```"):
+                result = result.split("```")[1]
+                if result.startswith("json"):
+                    result = result[4:]
+
+            parsed = json.loads(result)
+            terms = parsed.get('search_terms', [query])
+            logger.info(f"Понял вопрос, искать: {terms}")
+            return terms if terms else [query]
+        except json.JSONDecodeError as e:
+            logger.warning(f"Не удалось распарсить JSON: {e}")
+            return [query]
 
     def _get_cache_key(self, question: str, chunks: List[Dict]) -> str:
         """Генерирует ключ кеша."""
