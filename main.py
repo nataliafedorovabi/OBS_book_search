@@ -1,5 +1,5 @@
 import logging
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
 from src.config import TELEGRAM_TOKEN
 from src.vector_store import VectorStore
@@ -12,7 +12,8 @@ from src.handlers import (
     usage_command,
     voyage_command,
     voyage_reset_command,
-    handle_message
+    handle_message,
+    button_callback
 )
 
 # Настройка логирования
@@ -58,11 +59,12 @@ def main():
     application.add_handler(CommandHandler("usage", usage_command))
     application.add_handler(CommandHandler("voyage", voyage_command))
     application.add_handler(CommandHandler("voyage_reset", voyage_reset_command))
+    application.add_handler(CallbackQueryHandler(button_callback))  # Кнопки
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Запускаем бота
     logger.info("Бот запущен!")
-    application.run_polling(allowed_updates=["message"])
+    application.run_polling(allowed_updates=["message", "callback_query"])
 
 
 if __name__ == "__main__":
