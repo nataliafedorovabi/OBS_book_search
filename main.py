@@ -2,7 +2,7 @@ import logging
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
 from src.config import TELEGRAM_TOKEN
-from src.vector_store import VectorStore
+from src.tree_search import ContextTree, TreeSearcher
 from src.llm import LLMClient
 from src.handlers import (
     init_services,
@@ -10,8 +10,6 @@ from src.handlers import (
     help_command,
     status_command,
     usage_command,
-    voyage_command,
-    voyage_reset_command,
     handle_message,
     button_callback
 )
@@ -32,34 +30,35 @@ def main():
         logger.error("TELEGRAM_TOKEN не задан!")
         return
 
-    # Инициализируем сервисы (база создаётся из JSON если её нет)
-    logger.info("Инициализация векторной базы...")
-    vector_store = VectorStore()
-
-    docs_count = vector_store.get_count()
-    if docs_count == 0:
-        logger.error("База знаний пуста! Сначала запустите парсинг книг.")
+    # Загружаем дерево контекста
+    logger.info("Загрузка дерева контекста...")
+    tree = ContextTree()
+    if not tree.load():
+        logger.error("Не удалось загрузить дерево! Проверьте bot/data/context_tree.json")
         return
 
-    logger.info(f"Загружено {docs_count} фрагментов из книг.")
+    stats = tree.get_stats()
+    logger.info(f"Дерево загружено: {stats['chapters']} глав, {stats['chunks']} чанков")
 
+    # Инициализируем LLM
     logger.info("Инициализация LLM клиента...")
     llm_client = LLMClient()
+
+    # Создаём поисковик
+    searcher = TreeSearcher(tree, llm_client)
 
     # Создаём приложение бота
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # Передаём сервисы в обработчики (включая app для уведомлений)
-    init_services(vector_store, llm_client, application)
+    # Передаём сервисы в обработчики
+    init_services(searcher, llm_client, application)
 
     # Регистрируем обработчики
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("usage", usage_command))
-    application.add_handler(CommandHandler("voyage", voyage_command))
-    application.add_handler(CommandHandler("voyage_reset", voyage_reset_command))
-    application.add_handler(CallbackQueryHandler(button_callback))  # Кнопки
+    application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Запускаем бота
