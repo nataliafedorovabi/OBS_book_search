@@ -9,9 +9,11 @@
 """
 import json
 import logging
+import re
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
+from src.chapters import CHAPTERS_INFO
 
 logger = logging.getLogger(__name__)
 
@@ -228,61 +230,108 @@ class TreeSearcher:
             Список SearchResult
         """
         # Шаг 1: Понимаем вопрос
-        keywords = self._understand_query(query)
+        keywords, recommended_chapters = self._understand_query(query)
         logger.info(f"Ключевые слова для поиска: {keywords}")
 
-        # Шаг 2: Ищем релевантные главы
-        relevant_chapters = self.tree.search_chapters_by_keywords(keywords)[:top_chapters]
-        logger.info(f"Релевантные главы: {[ch['title'][:30] for ch in relevant_chapters]}")
+        # Извлекаем номера рекомендованных глав для бонуса
+        recommended_nums = set()
+        for ch in recommended_chapters:
+            match = re.search(r'Глава\s+(\d+)', ch)
+            if match:
+                recommended_nums.add(int(match.group(1)))
 
-        if not relevant_chapters:
-            # Fallback: берём все главы
-            relevant_chapters = self.tree.get_all_chapters()[:top_chapters]
-
-        # Шаг 3: Ищем чанки в каждой главе
+        # Шаг 2: Ищем по ВСЕМ чанкам (не только по выбранным главам)
         all_chunks = []
-        for chapter in relevant_chapters:
-            chapter_id = chapter['id']
-            chunks = self.tree.search_chunks_in_chapter(chapter_id, keywords)
 
-            for chunk in chunks[:3]:  # Берём топ-3 из каждой главы
+        # Расширяем ключевые слова
+        expanded_keywords = set()
+        for kw in keywords:
+            kw_lower = kw.lower()
+            # Разбиваем фразы на отдельные слова
+            words = kw_lower.split()
+            for word in words:
+                if len(word) > 2:
+                    expanded_keywords.add(word)
+                    # Убираем типичные русские окончания
+                    for ending in ['а', 'я', 'ы', 'и', 'у', 'ю', 'ой', 'ей', 'ом', 'ем', 'ов', 'ев', 'ами', 'ями', 'ость', 'ённость']:
+                        if word.endswith(ending) and len(word) > len(ending) + 2:
+                            expanded_keywords.add(word[:-len(ending)])
+
+        logger.info(f"Расширенные ключевые слова: {expanded_keywords}")
+
+        for chunk_id, chunk in self.tree._chunk_index.items():
+            score = 0
+            text_lower = chunk.get('text', '').lower()
+            chunk_keywords = [k.lower() for k in chunk.get('keywords', [])]
+
+            for kw in expanded_keywords:
+                if kw in text_lower:
+                    # Считаем вхождения
+                    count = text_lower.count(kw)
+                    score += count * 1.0
+                if kw in chunk_keywords:
+                    score += 0.5
+
+            if score > 0:
+                # Бонус за рекомендованные главы от LLM
+                chapter_title = chunk.get('chapter_title', '')
+                chapter_match = re.search(r'Глава\s+(\d+)', chapter_title)
+                if chapter_match and int(chapter_match.group(1)) in recommended_nums:
+                    score *= 2  # Удваиваем score для рекомендованных глав
+
                 all_chunks.append(SearchResult(
-                    chunk_id=chunk['id'],
+                    chunk_id=chunk_id,
                     text=chunk['text'],
-                    score=chunk.get('relevance_score', 0),
+                    score=score,
                     book_title=chunk.get('book_title', ''),
-                    chapter_title=chunk.get('chapter_title', ''),
+                    chapter_title=chapter_title,
                     chapter_summary=chunk.get('chapter_summary', ''),
                     section_title=chunk.get('section_title', ''),
                     keywords=chunk.get('keywords', [])
                 ))
 
-        # Сортируем и возвращаем топ
+        # Сортируем по score
         all_chunks.sort(key=lambda x: x.score, reverse=True)
-        return all_chunks[:top_chunks]
 
-    def _understand_query(self, query: str) -> List[str]:
+        # Берём топ, но стараемся взять из разных глав
+        result = []
+        chapters_count = {}  # глава -> сколько чанков взяли
+
+        for chunk in all_chunks:
+            if len(result) >= top_chunks:
+                break
+            # Берём не более 2 чанков из одной главы
+            ch = chunk.chapter_title
+            if chapters_count.get(ch, 0) < 2:
+                result.append(chunk)
+                chapters_count[ch] = chapters_count.get(ch, 0) + 1
+
+        logger.info(f"Найдено: {len(result)} чанков из {len(chapters_count)} глав")
+        return result
+
+    def _understand_query(self, query: str) -> tuple:
         """
-        Переосмысливает запрос, извлекая ключевые слова и темы.
-        Если есть LLM - использует его, иначе простое разбиение.
+        Переосмысливает запрос, извлекая ключевые слова и рекомендуемые главы.
+        Использует CHAPTERS_INFO с подсказками о связях терминов.
+
+        Returns:
+            (keywords, recommended_chapters)
         """
         if self.llm:
-            # Получаем информацию о главах из дерева
-            chapters_info = self.get_chapters_info()
-            # Используем LLM для понимания
-            analysis = self.llm.understand_query(query, chapters_info)
+            analysis = self.llm.understand_query(query, CHAPTERS_INFO)
             keywords = analysis.get('search_terms', [])
+            chapters = analysis.get('chapters', [])
             if keywords:
-                return keywords
+                logger.info(f"LLM понял запрос: термины={keywords}, главы={[c[:20] for c in chapters]}")
+                return keywords, chapters
 
         # Fallback: простое разбиение на слова
         import re
         words = re.findall(r'[а-яА-ЯёЁa-zA-Z]+', query.lower())
-        # Фильтруем стоп-слова
         stop_words = {'что', 'как', 'где', 'когда', 'почему', 'какой', 'какая', 'какие',
                      'это', 'такое', 'для', 'при', 'или', 'если', 'чем', 'между'}
         keywords = [w for w in words if w not in stop_words and len(w) > 2]
-        return keywords[:5]
+        return keywords[:5], []
 
     def get_chapters_info(self) -> str:
         """Возвращает информацию о главах для промпта LLM."""
