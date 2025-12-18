@@ -7,10 +7,9 @@ from typing import List, Dict, Optional
 from src.config import OPENROUTER_API_KEY, LLM_MODEL, MIN_RELEVANCE_SCORE
 from src.prompts import (
     SYSTEM_PROMPT, SYSTEM_PROMPT_WITH_ALTERNATIVES,
-    EXPAND_QUERY_PROMPT, UNDERSTAND_QUERY_PROMPT,
+    UNDERSTAND_QUERY_PROMPT,
     NO_CONTEXT_RESPONSE, LOW_RELEVANCE_RESPONSE
 )
-from src.chapters import CHAPTERS_INFO
 
 logger = logging.getLogger(__name__)
 
@@ -77,57 +76,21 @@ class LLMClient:
 
         return None
 
-    def expand_query(self, query: str) -> Dict:
+    def understand_query(self, query: str, chapters_info: str = "") -> Dict:
         """
-        Расширяет запрос пользователя, определяя связанные главы и термины.
-        Используется когда прямой поиск не дал результатов.
-        """
-        logger.info(f"Расширение запроса: {query}")
+        Анализирует вопрос и возвращает ключевые термины для поиска.
 
-        prompt = EXPAND_QUERY_PROMPT.format(
-            chapters_info=CHAPTERS_INFO,
-            query=query
-        )
-
-        result = self._call_llm(
-            system_prompt="Ты помощник для поиска информации. Отвечай только JSON.",
-            user_message=prompt,
-            max_tokens=200,
-            temperature=0.1
-        )
-
-        if not result:
-            logger.warning("Не удалось расширить запрос")
-            return {"chapters": [], "search_terms": [query]}
-
-        try:
-            # Пытаемся извлечь JSON из ответа
-            result = result.strip()
-            if result.startswith("```"):
-                result = result.split("```")[1]
-                if result.startswith("json"):
-                    result = result[4:]
-
-            parsed = json.loads(result)
-            logger.info(f"Расширенный запрос: главы={parsed.get('chapters', [])}, "
-                       f"термины={parsed.get('search_terms', [])}")
-            return parsed
-        except json.JSONDecodeError as e:
-            logger.warning(f"Не удалось распарсить JSON: {e}, ответ: {result[:200]}")
-            return {"chapters": [], "search_terms": [query]}
-
-    def understand_query(self, query: str) -> Dict:
-        """
-        Анализирует вопрос и возвращает главы и термины для поиска.
-        Используется для "сложных" вопросов, где нет известных терминов.
+        Args:
+            query: Вопрос пользователя
+            chapters_info: Информация о главах (опционально)
 
         Returns:
-            {"chapters": [...], "search_terms": [...]}
+            {"search_terms": [...]}
         """
         logger.info(f"Анализ вопроса: {query}")
 
         prompt = UNDERSTAND_QUERY_PROMPT.format(
-            chapters_info=CHAPTERS_INFO,
+            chapters_info=chapters_info,
             query=query
         )
 
