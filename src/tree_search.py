@@ -236,59 +236,80 @@ class TreeSearcher:
         query_words = re.findall(r'[а-яА-ЯёЁa-zA-Z]+', query.lower())
         stop_words = {'что', 'как', 'где', 'когда', 'почему', 'какой', 'какая', 'какие',
                      'это', 'такое', 'для', 'при', 'или', 'если', 'чем', 'между',
-                     'помню', 'была', 'скажи', 'искать', 'найти', 'покажи', 'расскажи'}
+                     'помню', 'была', 'скажи', 'искать', 'найти', 'покажи', 'расскажи',
+                     'можно', 'подробнее', 'расшифровать', 'модель', 'расскажи', 'про'}
+
+        # Слова из запроса — приоритетные (в начало списка)
+        priority_words = []
         for word in query_words:
-            if word not in stop_words and len(word) > 2 and word not in [k.lower() for k in keywords]:
-                keywords.append(word)
+            if word not in stop_words and len(word) > 2:
+                priority_words.append(word)
+
+        # Приоритетные слова в начало, остальные в конец
+        keywords = priority_words + [k for k in keywords if k.lower() not in priority_words]
 
         logger.info(f"Ключевые слова для поиска: {keywords}")
-
-        # Извлекаем номера рекомендованных глав для бонуса
-        recommended_nums = set()
-        for ch in recommended_chapters:
-            match = re.search(r'Глава\s+(\d+)', ch)
-            if match:
-                recommended_nums.add(int(match.group(1)))
 
         # Шаг 2: Ищем по ВСЕМ чанкам (не только по выбранным главам)
         all_chunks = []
 
         # Расширяем ключевые слова
-        expanded_keywords = set()
+        # priority_keywords - слова из запроса (вес x3)
+        # other_keywords - слова от LLM (вес x1)
+        priority_keywords = set()
+        other_keywords = set()
+
+        for kw in priority_words:
+            kw_lower = kw.lower()
+            priority_keywords.add(kw_lower)
+            # Убираем типичные русские окончания
+            for ending in ['а', 'я', 'ы', 'и', 'у', 'ю', 'ой', 'ей', 'ом', 'ем', 'ов', 'ев', 'ами', 'ями', 'ость', 'ённость']:
+                if kw_lower.endswith(ending) and len(kw_lower) > len(ending) + 2:
+                    priority_keywords.add(kw_lower[:-len(ending)])
+
         for kw in keywords:
             kw_lower = kw.lower()
-            # Разбиваем фразы на отдельные слова
-            words = kw_lower.split()
-            for word in words:
-                if len(word) > 2:
-                    expanded_keywords.add(word)
-                    # Убираем типичные русские окончания
-                    for ending in ['а', 'я', 'ы', 'и', 'у', 'ю', 'ой', 'ей', 'ом', 'ем', 'ов', 'ев', 'ами', 'ями', 'ость', 'ённость']:
-                        if word.endswith(ending) and len(word) > len(ending) + 2:
-                            expanded_keywords.add(word[:-len(ending)])
+            if kw_lower not in priority_keywords:
+                words = kw_lower.split()
+                for word in words:
+                    if len(word) > 2:
+                        other_keywords.add(word)
 
-        logger.info(f"Расширенные ключевые слова: {expanded_keywords}")
+        logger.info(f"Приоритетные: {priority_keywords}, другие: {other_keywords}")
 
         for chunk_id, chunk in self.tree._chunk_index.items():
             score = 0
             text_lower = chunk.get('text', '').lower()
+            section_lower = chunk.get('section_title', '').lower()
+            chapter_lower = chunk.get('chapter_title', '').lower()
             chunk_keywords = [k.lower() for k in chunk.get('keywords', [])]
 
-            for kw in expanded_keywords:
+            # Приоритетные слова (из запроса) - вес x3
+            for kw in priority_keywords:
+                if kw in section_lower:
+                    score += 15  # 5 * 3
+                if kw in chapter_lower:
+                    score += 9   # 3 * 3
                 if kw in text_lower:
-                    # Считаем вхождения
+                    count = text_lower.count(kw)
+                    score += count * 3.0
+                if kw in chunk_keywords:
+                    score += 1.5
+
+            # Остальные слова (от LLM) - вес x1
+            for kw in other_keywords:
+                if kw in section_lower:
+                    score += 5
+                if kw in chapter_lower:
+                    score += 3
+                if kw in text_lower:
                     count = text_lower.count(kw)
                     score += count * 1.0
                 if kw in chunk_keywords:
                     score += 0.5
 
             if score > 0:
-                # Бонус за рекомендованные главы от LLM
                 chapter_title = chunk.get('chapter_title', '')
-                chapter_match = re.search(r'Глава\s+(\d+)', chapter_title)
-                if chapter_match and int(chapter_match.group(1)) in recommended_nums:
-                    score *= 2  # Удваиваем score для рекомендованных глав
-
                 all_chunks.append(SearchResult(
                     chunk_id=chunk_id,
                     text=chunk['text'],
