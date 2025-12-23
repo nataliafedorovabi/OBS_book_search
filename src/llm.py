@@ -25,6 +25,16 @@ class LLMClient:
         self._cache_max = 100
         logger.info(f"LLM клиент инициализирован: модель={self.model}")
 
+    def _format_book_name(self, book_raw: str) -> str:
+        """Преобразует внутреннее имя книги в отображаемое."""
+        if "R628_book" in book_raw:
+            part = book_raw.replace("R628_book", "")
+            return f"R628 Часть {part}"
+        elif "R629_book" in book_raw:
+            part = book_raw.replace("R629_book", "")
+            return f"R629 Часть {part}"
+        return book_raw or "Книга"
+
     def _call_llm(self, system_prompt: str, user_message: str,
                   max_tokens: int = 600, temperature: float = 0.3) -> Optional[str]:
         """Базовый вызов LLM."""
@@ -77,16 +87,7 @@ class LLMClient:
         return None
 
     def understand_query(self, query: str, chapters_info: str = "") -> Dict:
-        """
-        Анализирует вопрос и возвращает ключевые термины для поиска.
-
-        Args:
-            query: Вопрос пользователя
-            chapters_info: Информация о главах (опционально)
-
-        Returns:
-            {"search_terms": [...]}
-        """
+        """Анализирует вопрос и возвращает ключевые термины для поиска."""
         logger.info(f"Анализ вопроса: {query}")
 
         prompt = UNDERSTAND_QUERY_PROMPT.format(
@@ -131,14 +132,7 @@ class LLMClient:
 
     def generate_answer(self, question: str, context_chunks: List[Dict],
                        is_expanded_search: bool = False) -> str:
-        """
-        Генерирует ответ на вопрос на основе контекста из книг.
-
-        Args:
-            question: Вопрос пользователя
-            context_chunks: Найденные фрагменты
-            is_expanded_search: True если это результат расширенного поиска
-        """
+        """Генерирует ответ на вопрос на основе контекста из книг."""
         if not context_chunks:
             return NO_CONTEXT_RESPONSE
 
@@ -156,9 +150,7 @@ class LLMClient:
         context_parts = []
         for i, chunk in enumerate(context_chunks, 1):
             book_raw = chunk["metadata"].get("book_title", chunk["metadata"].get("book", ""))
-            # Преобразуем R628_book1 → Часть 1
-            book_num = book_raw.replace("R628_book", "") if "R628_book" in book_raw else ""
-            book = f"Часть {book_num}" if book_num else "Книга"
+            book = self._format_book_name(book_raw)
 
             chapter = chunk["metadata"].get("chapter", "")
             section = chunk["metadata"].get("section", "")
