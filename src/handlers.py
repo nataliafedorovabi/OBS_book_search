@@ -102,10 +102,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = llm_client.generate_answer(question, context_chunks, is_expanded_search=True)
     rate_limiter.record_request()
 
+    # Добавляем источники
+    unique_books = set()
+    for r in results:
+        unique_books.add(get_book_display_name(r.book_title))
+    sources = ", ".join(sorted(unique_books))
+    answer_with_sources = answer + "\n\n📚 *Источники:* " + sources
+
     keyboard = [[InlineKeyboardButton("Подробнее", callback_data="details")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(answer, parse_mode="Markdown", reply_markup=reply_markup)
+    await update.message.reply_text(answer_with_sources, parse_mode="Markdown", reply_markup=reply_markup)
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -132,22 +139,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         chapters_list = list(unique_chapters.values())
 
+        # Убираем кнопку с текущего сообщения
+        await query.edit_message_reply_markup(reply_markup=None)
+
         if len(chapters_list) == 1:
             ch = chapters_list[0]
             book_name = get_book_display_name(ch["book"])
             summary = ch["summary"] or "Краткое содержание недоступно."
             text = f"*{book_name}*\n*{ch['chapter']}*\n\n{summary}"
 
-            keyboard = [[InlineKeyboardButton("Назад", callback_data="back")]]
-            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            keyboard = [[InlineKeyboardButton("Закрыть", callback_data="close")]]
+            await query.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             keyboard = []
             for i, ch in enumerate(chapters_list[:5]):
                 book_name = get_book_display_name(ch["book"])
                 ch_short = ch["chapter"][:30] + "..." if len(ch["chapter"]) > 30 else ch["chapter"]
                 keyboard.append([InlineKeyboardButton(f"{book_name}: {ch_short}", callback_data=f"ch_{i}")])
-            keyboard.append([InlineKeyboardButton("Назад", callback_data="back")])
-            await query.edit_message_text("Выберите главу:", reply_markup=InlineKeyboardMarkup(keyboard))
+            keyboard.append([InlineKeyboardButton("Закрыть", callback_data="close")])
+            await query.message.reply_text("Выберите главу:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("ch_"):
         idx = int(data.replace("ch_", ""))
@@ -164,23 +174,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             summary = ch["summary"] or "Краткое содержание недоступно."
             text = f"*{book_name}*\n*{ch['chapter']}*\n\n{summary}"
 
+            # Убираем кнопку с текущего сообщения
+            await query.edit_message_reply_markup(reply_markup=None)
+
             keyboard = [
                 [InlineKeyboardButton("Другая глава", callback_data="details")],
                 [InlineKeyboardButton("Закрыть", callback_data="close")]
             ]
-            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data == "back":
-        context_chunks = []
-        for r in results:
-            context_chunks.append({
-                'text': r.text,
-                'metadata': {'book_title': r.book_title, 'chapter': r.chapter_title, 'section': r.section_title},
-                'score': r.score
-            })
-        answer = llm_client.generate_answer(question, context_chunks, is_expanded_search=True)
-        keyboard = [[InlineKeyboardButton("Подробнее", callback_data="details")]]
-        await query.edit_message_text(answer, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "close":
         await query.edit_message_reply_markup(reply_markup=None)
