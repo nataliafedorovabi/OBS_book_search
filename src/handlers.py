@@ -73,6 +73,23 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
+def get_chapters_split(results, answer):
+    """Разделяет главы на упомянутые в ответе и дополнительные."""
+    mentioned = {}
+    extra = {}
+    for r in results:
+        key = f"{r.book_title}|{r.chapter_title}"
+        book_name = get_book_display_name(r.book_title)
+        ch_data = {"book": r.book_title, "chapter": r.chapter_title, "summary": r.chapter_summary}
+        if book_name in answer:
+            if key not in mentioned:
+                mentioned[key] = ch_data
+        else:
+            if key not in extra and key not in mentioned:
+                extra[key] = ch_data
+    return list(mentioned.values()), list(extra.values())
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     question = update.message.text.strip()
     user_id = update.effective_user.id
@@ -89,8 +106,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("В материалах нет информации. Переформулируйте вопрос.")
         return
 
-    search_results_cache[user_id] = {"results": results, "question": question}
-
     context_chunks = []
     for r in results:
         context_chunks.append({
@@ -102,11 +117,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = llm_client.generate_answer(question, context_chunks, is_expanded_search=True)
     rate_limiter.record_request()
 
+    # Сохраняем в кэш с ответом
+    search_results_cache[user_id] = {"results": results, "question": question, "answer": answer}
+
     # Добавляем только те источники, которые LLM реально упомянул в ответе
     mentioned_books = set()
     for r in results:
-        book_name = get_book_display_name(r.book_title)  # "R628 Часть 2" или "R629 Часть 1"
-        # Проверяем точное название книги в ответе
+        book_name = get_book_display_name(r.book_title)
         if book_name in answer:
             mentioned_books.add(book_name)
 
@@ -116,7 +133,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mentioned_books.add(get_book_display_name(r.book_title))
 
     sources = ", ".join(sorted(mentioned_books))
-    answer_with_sources = answer + chr(10) + chr(10) + chr(128218) + " *Источники:* " + sources
+    nl = chr(10)
+    book_emoji = chr(128218)
+    answer_with_sources = answer + nl + nl + book_emoji + " *Источники:* " + sources
 
     keyboard = [[InlineKeyboardButton("Подробнее", callback_data="details")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -131,6 +150,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
+    # Игнорируем нажатие на разделитель
+    if data == "noop":
+        return
+
     cached = search_results_cache.get(user_id)
     if not cached:
         await query.edit_message_reply_markup(reply_markup=None)
@@ -138,37 +161,56 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     results = cached["results"]
     question = cached["question"]
+    answer = cached.get("answer", "")
 
     if data == "details":
-        unique_chapters = {}
-        for r in results:
-            key = f"{r.book_title}|{r.chapter_title}"
-            if key not in unique_chapters:
-                unique_chapters[key] = {"book": r.book_title, "chapter": r.chapter_title, "summary": r.chapter_summary}
+        mentioned_chapters, extra_chapters = get_chapters_split(results, answer)
 
-        chapters_list = list(unique_chapters.values())
+        keyboard = []
 
-        # Убираем кнопку с текущего сообщения
-        await query.edit_message_reply_markup(reply_markup=None)
-
-        if len(chapters_list) == 1:
-            ch = chapters_list[0]
-            book_name = get_book_display_name(ch["book"])
-            summary = ch["summary"] or "Краткое содержание недоступно."
-            text = f"*{book_name}*\n*{ch['chapter']}*\n\n{summary}"
-
-            keyboard = [[InlineKeyboardButton("Закрыть", callback_data="close")]]
-            await query.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-        else:
-            keyboard = []
-            for i, ch in enumerate(chapters_list[:5]):
+        # Добавляем упомянутые главы
+        if mentioned_chapters:
+            keyboard.append([InlineKeyboardButton("--- Главы из ответа ---", callback_data="noop")])
+            for i, ch in enumerate(mentioned_chapters[:3]):
                 book_name = get_book_display_name(ch["book"])
                 ch_short = ch["chapter"][:30] + "..." if len(ch["chapter"]) > 30 else ch["chapter"]
-                keyboard.append([InlineKeyboardButton(f"{book_name}: {ch_short}", callback_data=f"ch_{i}")])
-            keyboard.append([InlineKeyboardButton("Закрыть", callback_data="close")])
-            await query.message.reply_text("Выберите главу:", reply_markup=InlineKeyboardMarkup(keyboard))
+                keyboard.append([InlineKeyboardButton(f"{book_name}: {ch_short}", callback_data=f"m_{i}")])
+
+        # Добавляем дополнительные главы
+        if extra_chapters:
+            keyboard.append([InlineKeyboardButton("--- Ещё найдено ---", callback_data="noop")])
+            for i, ch in enumerate(extra_chapters[:3]):
+                book_name = get_book_display_name(ch["book"])
+                ch_short = ch["chapter"][:30] + "..." if len(ch["chapter"]) > 30 else ch["chapter"]
+                keyboard.append([InlineKeyboardButton(f"{book_name}: {ch_short}", callback_data=f"e_{i}")])
+
+        keyboard.append([InlineKeyboardButton("Закрыть", callback_data="close")])
+
+        # Отправляем новое сообщение, не удаляя старое
+        await query.message.reply_text("Выберите главу:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("m_") or data.startswith("e_"):
+        # m_ = mentioned, e_ = extra
+        is_mentioned = data.startswith("m_")
+        idx = int(data[2:])
+
+        mentioned_chapters, extra_chapters = get_chapters_split(results, answer)
+        chapters_list = mentioned_chapters if is_mentioned else extra_chapters
+
+        if idx < len(chapters_list):
+            ch = chapters_list[idx]
+            book_name = get_book_display_name(ch["book"])
+            summary = ch["summary"] or "Краткое содержание недоступно."
+            text = "*" + book_name + "*\n*" + ch["chapter"] + "*\n\n" + summary
+
+            keyboard = [
+                [InlineKeyboardButton("Другая глава", callback_data="details")],
+                [InlineKeyboardButton("Закрыть", callback_data="close")]
+            ]
+            await query.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("ch_"):
+        # Старый формат для обратной совместимости
         idx = int(data.replace("ch_", ""))
         unique_chapters = {}
         for r in results:
@@ -181,10 +223,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ch = chapters_list[idx]
             book_name = get_book_display_name(ch["book"])
             summary = ch["summary"] or "Краткое содержание недоступно."
-            text = f"*{book_name}*\n*{ch['chapter']}*\n\n{summary}"
-
-            # Убираем кнопку с текущего сообщения
-            await query.edit_message_reply_markup(reply_markup=None)
+            text = "*" + book_name + "*\n*" + ch["chapter"] + "*\n\n" + summary
 
             keyboard = [
                 [InlineKeyboardButton("Другая глава", callback_data="details")],
