@@ -102,12 +102,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = llm_client.generate_answer(question, context_chunks, is_expanded_search=True)
     rate_limiter.record_request()
 
-    # Добавляем источники
-    unique_books = set()
+    # Добавляем только те источники, которые LLM реально упомянул в ответе
+    mentioned_books = set()
     for r in results:
-        unique_books.add(get_book_display_name(r.book_title))
-    sources = ", ".join(sorted(unique_books))
-    answer_with_sources = answer + "\n\n📚 *Источники:* " + sources
+        book_name = get_book_display_name(r.book_title)
+        # Проверяем, упомянута ли книга в ответе
+        book_code = "R628" if "R628" in r.book_title else "R629"
+        if book_code in answer:
+            mentioned_books.add(book_name)
+
+    # Если LLM не упомянул ни одной книги, показываем все
+    if not mentioned_books:
+        for r in results:
+            mentioned_books.add(get_book_display_name(r.book_title))
+
+    sources = ", ".join(sorted(mentioned_books))
+    answer_with_sources = answer + chr(10) + chr(10) + chr(128218) + " *Источники:* " + sources
 
     keyboard = [[InlineKeyboardButton("Подробнее", callback_data="details")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
