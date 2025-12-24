@@ -7,7 +7,7 @@ from typing import List, Dict, Optional
 from src.config import OPENROUTER_API_KEY, LLM_MODEL, MIN_RELEVANCE_SCORE
 from src.prompts import (
     SYSTEM_PROMPT, SYSTEM_PROMPT_WITH_ALTERNATIVES,
-    UNDERSTAND_QUERY_PROMPT,
+    UNDERSTAND_QUERY_PROMPT, CHAPTER_SUMMARY_PROMPT,
     NO_CONTEXT_RESPONSE, LOW_RELEVANCE_RESPONSE
 )
 
@@ -195,3 +195,36 @@ class LLMClient:
             return answer
 
         return "Не удалось получить ответ. Попробуйте позже."
+
+    def generate_chapter_summary(self, book_name: str, chapter_title: str,
+                                  chapter_chunks: List[Dict]) -> str:
+        """Генерирует практичное саммари главы."""
+        if not chapter_chunks:
+            return "Содержимое главы недоступно."
+
+        context_parts = []
+        for chunk in chapter_chunks[:4]:
+            text = chunk.get('text', '')
+            section = chunk.get('section_title', '')
+            if section:
+                context_parts.append("[" + section + "]" + chr(10) + text)
+            else:
+                context_parts.append(text)
+
+        context = (chr(10) + chr(10) + "---" + chr(10) + chr(10)).join(context_parts)
+
+        user_message = (
+            "КНИГА: " + book_name + chr(10) +
+            "ГЛАВА: " + chapter_title + chr(10) + chr(10) +
+            "СОДЕРЖИМОЕ ГЛАВЫ:" + chr(10) + context + chr(10) + chr(10) +
+            "Дай ПРАКТИЧНУЮ выжимку:"
+        )
+
+        result = self._call_llm(
+            CHAPTER_SUMMARY_PROMPT,
+            user_message,
+            max_tokens=800,
+            temperature=0.3
+        )
+
+        return result or "Не удалось сгенерировать саммари."

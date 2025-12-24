@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
-from src.chapters import CHAPTERS_INFO
+from src.chapters import CHAPTERS_INFO, correct_typo
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +243,11 @@ class TreeSearcher:
         priority_words = []
         for word in query_words:
             if word not in stop_words and len(word) > 2:
-                priority_words.append(word)
+                # Исправляем известные опечатки
+                corrected = correct_typo(word)
+                priority_words.append(corrected)
+                if corrected != word:
+                    priority_words.append(word)  # Добавляем и оригинал
 
         # Приоритетные слова в начало, остальные в конец
         keywords = priority_words + [k for k in keywords if k.lower() not in priority_words]
