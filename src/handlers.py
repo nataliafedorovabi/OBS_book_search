@@ -105,10 +105,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Добавляем только те источники, которые LLM реально упомянул в ответе
     mentioned_books = set()
     for r in results:
-        book_name = get_book_display_name(r.book_title)
-        # Проверяем, упомянута ли книга в ответе
-        book_code = "R628" if "R628" in r.book_title else "R629"
-        if book_code in answer:
+        book_name = get_book_display_name(r.book_title)  # "R628 Часть 2" или "R629 Часть 1"
+        # Проверяем точное название книги в ответе
+        if book_name in answer:
             mentioned_books.add(book_name)
 
     # Если LLM не упомянул ни одной книги, показываем все
