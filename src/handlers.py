@@ -201,13 +201,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ch = chapters_list[idx]
             book_name = get_book_display_name(ch["book"])
             summary = ch["summary"] or "Краткое содержание недоступно."
-            text = "*" + book_name + "*\n*" + ch["chapter"] + "*\n\n" + summary
+            header = f"*{book_name}*\n*{ch['chapter']}*\n\n"
 
             keyboard = [
                 [InlineKeyboardButton("Другая глава", callback_data="details")],
                 [InlineKeyboardButton("Закрыть", callback_data="close")]
             ]
-            await query.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            try:
+                await query.message.reply_text(header + summary, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            except Exception as e:
+                logger.warning(f"Markdown error: {e}")
+                plain = book_name + chr(10) + ch["chapter"] + chr(10) + chr(10) + summary
+                await query.message.reply_text(plain, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("ch_"):
         # Старый формат для обратной совместимости
@@ -223,13 +228,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ch = chapters_list[idx]
             book_name = get_book_display_name(ch["book"])
             summary = ch["summary"] or "Краткое содержание недоступно."
-            text = "*" + book_name + "*\n*" + ch["chapter"] + "*\n\n" + summary
+            header = f"*{book_name}*\n*{ch['chapter']}*\n\n"
 
             keyboard = [
                 [InlineKeyboardButton("Другая глава", callback_data="details")],
                 [InlineKeyboardButton("Закрыть", callback_data="close")]
             ]
-            await query.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            try:
+                await query.message.reply_text(header + summary, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            except Exception as e:
+                logger.warning(f"Markdown error: {e}")
+                plain = book_name + chr(10) + ch["chapter"] + chr(10) + chr(10) + summary
+                await query.message.reply_text(plain, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "close":
         await query.edit_message_reply_markup(reply_markup=None)
