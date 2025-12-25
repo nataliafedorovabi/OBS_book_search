@@ -25,61 +25,37 @@ def init_services(tree_searcher: TreeSearcher, llm: LLMClient, app: Application 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = searcher.tree.get_stats() if searcher else {}
-    text = (
-        "Привет! Я бот-ассистент курсов:
-"
-        "- R628 Управление организацией и персоналом
-"
-        "- R629 Управление маркетингом и финансами
-
-"
-        f"В базе: {stats.get('books', 0)} книг, {stats.get('chapters', 0)} глав.
-
-"
-        "Задайте вопрос по материалам, и я найду ответ.
-
-"
-        "/help - как задавать вопросы
-"
-        "/status - статус базы знаний"
-    )
+    nl = chr(10)
+    text = "Привет! Я бот-ассистент курсов:" + nl
+    text += "- R628 Управление организацией и персоналом" + nl
+    text += "- R629 Управление маркетингом и финансами" + nl + nl
+    text += "В базе: " + str(stats.get("books", 0)) + " книг, " + str(stats.get("chapters", 0)) + " глав." + nl + nl
+    text += "Задайте вопрос по материалам, и я найду ответ." + nl + nl
+    text += "/help - как задавать вопросы" + nl
+    text += "/status - статус базы знаний"
     await update.message.reply_text(text)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "Как задавать вопросы:
-
-"
-        "- Какие роли выполняет менеджер?
-"
-        "- Что такое делегирование?
-"
-        "- Что такое 4P маркетинга?
-"
-        "- Как рассчитать точку безубыточности?
-
-"
-        "После ответа нажмите Подробнее для изучения глав."
-    )
+    nl = chr(10)
+    text = "Как задавать вопросы:" + nl + nl
+    text += "- Какие роли выполняет менеджер?" + nl
+    text += "- Что такое делегирование?" + nl
+    text += "- Что такое 4P маркетинга?" + nl
+    text += "- Как рассчитать точку безубыточности?" + nl + nl
+    text += "После ответа нажмите Подробнее для изучения глав."
     await update.message.reply_text(text)
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = searcher.tree.get_stats() if searcher else {}
+    nl = chr(10)
     if stats:
-        text = (
-            "База знаний активна.
-
-"
-            f"Книг: {stats.get('books', 0)}
-"
-            f"Глав: {stats.get('chapters', 0)}
-"
-            f"Секций: {stats.get('sections', 0)}
-"
-            f"Фрагментов: {stats.get('chunks', 0)}"
-        )
+        text = "База знаний активна." + nl + nl
+        text += "Книг: " + str(stats.get("books", 0)) + nl
+        text += "Глав: " + str(stats.get("chapters", 0)) + nl
+        text += "Секций: " + str(stats.get("sections", 0)) + nl
+        text += "Фрагментов: " + str(stats.get("chunks", 0))
         await update.message.reply_text(text)
     else:
         await update.message.reply_text("База знаний недоступна.")
@@ -90,16 +66,15 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ADMIN_TELEGRAM_IDS and user_id not in ADMIN_TELEGRAM_IDS:
         return
     usage = rate_limiter.get_usage_info()
-    text = f"Статистика за {usage['date']}:
-Запросов: {usage['requests_today']} из {usage['limit']}"
+    nl = chr(10)
+    text = "Статистика за " + usage["date"] + ":" + nl + "Запросов: " + str(usage["requests_today"]) + " из " + str(usage["limit"])
     await update.message.reply_text(text)
 
 
 def get_unique_chapters(results):
-    """Возвращает уникальные главы из результатов поиска."""
     unique = {}
     for r in results:
-        key = f"{r.book_title}|{r.chapter_title}"
+        key = r.book_title + "|" + r.chapter_title
         if key not in unique:
             unique[key] = {"book": r.book_title, "chapter": r.chapter_title, "summary": r.chapter_summary}
     return list(unique.values())
@@ -113,7 +88,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    logger.info(f"Вопрос: {question[:50]}...")
+    logger.info("Вопрос: " + question[:50] + "...")
 
     results = searcher.search(question, top_chapters=4, top_chunks=6)
 
@@ -124,25 +99,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context_chunks = []
     for r in results:
         context_chunks.append({
-            'text': r.text,
-            'metadata': {'book_title': r.book_title, 'chapter': r.chapter_title, 'section': r.section_title},
-            'score': r.score
+            "text": r.text,
+            "metadata": {"book_title": r.book_title, "chapter": r.chapter_title, "section": r.section_title},
+            "score": r.score
         })
 
     answer = llm_client.generate_answer(question, context_chunks, is_expanded_search=True)
     rate_limiter.record_request()
 
-    # Сохраняем в кэш
     search_results_cache[user_id] = {"results": results, "question": question}
 
-    # Добавляем только те источники, которые LLM реально упомянул в ответе
     mentioned_books = set()
     for r in results:
         book_name = get_book_display_name(r.book_title)
         if book_name in answer:
             mentioned_books.add(book_name)
 
-    # Если LLM не упомянул ни одной книги, показываем все
     if not mentioned_books:
         for r in results:
             mentioned_books.add(get_book_display_name(r.book_title))
@@ -171,6 +143,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     results = cached["results"]
+    nl = chr(10)
 
     if data == "details":
         chapters = get_unique_chapters(results)
@@ -178,8 +151,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
         for i, ch in enumerate(chapters[:6]):
             book_name = get_book_display_name(ch["book"])
-            ch_short = ch["chapter"][:30] + "..." if len(ch["chapter"]) > 30 else ch["chapter"]
-            keyboard.append([InlineKeyboardButton(f"{book_name}: {ch_short}", callback_data=f"ch_{i}")])
+            ch_title = ch["chapter"]
+            ch_short = ch_title[:30] + "..." if len(ch_title) > 30 else ch_title
+            keyboard.append([InlineKeyboardButton(book_name + ": " + ch_short, callback_data="ch_" + str(i))])
 
         keyboard.append([InlineKeyboardButton("Закрыть", callback_data="close")])
 
@@ -193,10 +167,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ch = chapters[idx]
             book_name = get_book_display_name(ch["book"])
             summary = ch["summary"] or "Краткое содержание недоступно."
-            header = f"*{book_name}*
-*{ch['chapter']}*
-
-"
+            header = "*" + book_name + "*" + nl + "*" + ch["chapter"] + "*" + nl + nl
 
             keyboard = [
                 [InlineKeyboardButton("Другая глава", callback_data="details")],
@@ -205,8 +176,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await query.message.reply_text(header + summary, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
             except Exception as e:
-                logger.warning(f"Markdown error: {e}")
-                plain = book_name + chr(10) + ch["chapter"] + chr(10) + chr(10) + summary
+                logger.warning("Markdown error: " + str(e))
+                plain = book_name + nl + ch["chapter"] + nl + nl + summary
                 await query.message.reply_text(plain, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "close":
