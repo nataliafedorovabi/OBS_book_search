@@ -1,4 +1,5 @@
 import logging
+import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, Application
 from src.tree_search import TreeSearcher
@@ -71,13 +72,28 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
-def get_unique_chapters(results):
-    unique = {}
+def get_mentioned_chapters(results, answer):
+    mentioned = []
+    seen_keys = set()
+
     for r in results:
         key = r.book_title + "|" + r.chapter_title
-        if key not in unique:
-            unique[key] = {"book": r.book_title, "chapter": r.chapter_title, "summary": r.chapter_summary}
-    return list(unique.values())
+        if key in seen_keys:
+            continue
+
+        book_name = get_book_display_name(r.book_title)
+
+        ch_match = re.search(r"Глава\s*(\d+)", r.chapter_title)
+        if not ch_match:
+            continue
+        ch_num = ch_match.group(1)
+
+        pattern = re.escape(book_name) + r".*?Глава\s*" + ch_num + r"\b"
+        if re.search(pattern, answer, re.DOTALL):
+            seen_keys.add(key)
+            mentioned.append({"book": r.book_title, "chapter": r.chapter_title, "summary": r.chapter_summary})
+
+    return mentioned
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -107,7 +123,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = llm_client.generate_answer(question, context_chunks, is_expanded_search=True)
     rate_limiter.record_request()
 
-    search_results_cache[user_id] = {"results": results, "question": question}
+    search_results_cache[user_id] = {"results": results, "question": question, "answer": answer}
 
     mentioned_books = set()
     for r in results:
@@ -143,10 +159,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     results = cached["results"]
+    answer = cached.get("answer", "")
     nl = chr(10)
 
     if data == "details":
-        chapters = get_unique_chapters(results)
+        chapters = get_mentioned_chapters(results, answer)
+
+        if not chapters:
+            await query.message.reply_text("Главы не найдены.")
+            return
 
         keyboard = []
         for i, ch in enumerate(chapters[:6]):
@@ -161,7 +182,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("ch_"):
         idx = int(data.replace("ch_", ""))
-        chapters = get_unique_chapters(results)
+        chapters = get_mentioned_chapters(results, answer)
 
         if idx < len(chapters):
             ch = chapters[idx]
