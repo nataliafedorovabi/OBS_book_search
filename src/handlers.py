@@ -75,13 +75,26 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def get_chapters_split(results, answer):
     """Разделяет главы на упомянутые в ответе и дополнительные."""
+    import re as regex
     mentioned = {}
     extra = {}
     for r in results:
         key = f"{r.book_title}|{r.chapter_title}"
         book_name = get_book_display_name(r.book_title)
         ch_data = {"book": r.book_title, "chapter": r.chapter_title, "summary": r.chapter_summary}
-        if book_name in answer:
+
+        # Извлекаем номер главы
+        ch_match = regex.search(r'Глава\s*(\d+)', r.chapter_title)
+        ch_num = ch_match.group(1) if ch_match else None
+
+        # Проверяем конкретную главу в ответе
+        is_mentioned = False
+        if ch_num and book_name in answer:
+            pattern = book_name + r'[^📖]*Глава\s*' + ch_num + r''
+            if regex.search(pattern, answer):
+                is_mentioned = True
+
+        if is_mentioned:
             if key not in mentioned:
                 mentioned[key] = ch_data
         else:
