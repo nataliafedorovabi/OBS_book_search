@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes, Application
 from src.tree_search import TreeSearcher
 from src.llm import LLMClient
 from src.rate_limiter import RateLimiter
-from src.config import ADMIN_TELEGRAM_IDS
+from src.config import ADMIN_TELEGRAM_ID
 from src.chapters import get_book_display_name
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    if ADMIN_TELEGRAM_IDS and user_id not in ADMIN_TELEGRAM_IDS:
+    if ADMIN_TELEGRAM_ID and user_id not in ADMIN_TELEGRAM_ID:
         return
 
     stats = rate_limiter.get_admin_stats()
@@ -280,4 +280,5 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "close":
         await query.edit_message_reply_markup(reply_markup=None)
+
 
