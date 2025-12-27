@@ -51,8 +51,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += "/status - статус базы знаний"
 
     user_id = str(update.effective_user.id)
-    logger.info(f"start_command: user_id={user_id}, ADMIN_IDS={ADMIN_TELEGRAM_IDS}")
-    if ADMIN_TELEGRAM_IDS and user_id in ADMIN_TELEGRAM_IDS:
+    logger.info(f"start_command: user_id={user_id}, ADMIN_IDS={ADMIN_TELEGRAM_ID}")
+    if ADMIN_TELEGRAM_ID and user_id in ADMIN_TELEGRAM_ID:
         text += nl + "/usage - статистика (админ)"
 
     await update.message.reply_text(text)
@@ -280,3 +280,4 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "close":
         await query.edit_message_reply_markup(reply_markup=None)
+
