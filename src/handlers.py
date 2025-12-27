@@ -198,7 +198,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.message.reply_text(header + summary, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
             except Exception as e:
                 logger.warning("Markdown error: " + str(e))
-                plain = book_name + nl + ch["chapter"] + nl + nl + summary
+                # Очищаем Markdown разметку для plain текста
+                clean_summary = re.sub(r'\*+', '', summary)
+                clean_summary = re.sub(r'_+', '', clean_summary)
+                plain = book_name + nl + ch["chapter"] + nl + nl + clean_summary
                 await query.message.reply_text(plain, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "close":
