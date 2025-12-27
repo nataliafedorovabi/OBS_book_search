@@ -10,6 +10,18 @@ from src.chapters import get_book_display_name
 
 logger = logging.getLogger(__name__)
 
+
+def pluralize(n: int, form1: str, form2: str, form5: str) -> str:
+    """Склонение слова по числу: 1 книга, 2 книги, 5 книг."""
+    n = abs(n)
+    if n % 10 == 1 and n % 100 != 11:
+        return form1
+    elif 2 <= n % 10 <= 4 and not (12 <= n % 100 <= 14):
+        return form2
+    else:
+        return form5
+
+
 searcher: TreeSearcher = None
 llm_client: LLMClient = None
 rate_limiter: RateLimiter = None
@@ -27,10 +39,13 @@ def init_services(tree_searcher: TreeSearcher, llm: LLMClient, app: Application 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = searcher.tree.get_stats() if searcher else {}
     nl = chr(10)
+    books = stats.get("books", 0)
+    chapters = stats.get("chapters", 0)
     text = "Привет! Я бот-ассистент курсов:" + nl
     text += "- R628 Управление организацией и персоналом" + nl
     text += "- R629 Управление маркетингом и финансами" + nl + nl
-    text += "В базе: " + str(stats.get("books", 0)) + " книг, " + str(stats.get("chapters", 0)) + " глав." + nl + nl
+    text += "В базе: " + str(books) + " " + pluralize(books, "книга", "книги", "книг")
+    text += ", " + str(chapters) + " " + pluralize(chapters, "глава", "главы", "глав") + "." + nl + nl
     text += "Задайте вопрос по материалам, и я найду ответ." + nl + nl
     text += "/help - как задавать вопросы" + nl
     text += "/status - статус базы знаний"
@@ -52,11 +67,15 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = searcher.tree.get_stats() if searcher else {}
     nl = chr(10)
     if stats:
+        books = stats.get("books", 0)
+        chapters = stats.get("chapters", 0)
+        sections = stats.get("sections", 0)
+        chunks = stats.get("chunks", 0)
         text = "База знаний активна." + nl + nl
-        text += "Книг: " + str(stats.get("books", 0)) + nl
-        text += "Глав: " + str(stats.get("chapters", 0)) + nl
-        text += "Секций: " + str(stats.get("sections", 0)) + nl
-        text += "Фрагментов: " + str(stats.get("chunks", 0))
+        text += str(books) + " " + pluralize(books, "книга", "книги", "книг") + nl
+        text += str(chapters) + " " + pluralize(chapters, "глава", "главы", "глав") + nl
+        text += str(sections) + " " + pluralize(sections, "секция", "секции", "секций") + nl
+        text += str(chunks) + " " + pluralize(chunks, "фрагмент", "фрагмента", "фрагментов")
         await update.message.reply_text(text)
     else:
         await update.message.reply_text("База знаний недоступна.")
@@ -66,10 +85,52 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     if ADMIN_TELEGRAM_IDS and user_id not in ADMIN_TELEGRAM_IDS:
         return
-    usage = rate_limiter.get_usage_info()
+
+    stats = rate_limiter.get_admin_stats()
     nl = chr(10)
-    text = "Статистика за " + usage["date"] + ":" + nl + "Запросов: " + str(usage["requests_today"]) + " из " + str(usage["limit"])
+
+    # Header
+    text = "=== Статистика бота ===" + nl + nl
+
+    # Today
+    reqs_today = stats["requests_today"]
+    text += "Сегодня (" + stats["date"] + "):" + nl
+    text += str(reqs_today) + " " + pluralize(reqs_today, "запрос", "запроса", "запросов")
+    text += " из " + str(stats["limit"]) + nl + nl
+
+    # All time
+    total = stats["total_requests"]
+    days = stats["days_tracked"]
+    avg = stats["avg_per_day"]
+    text += "Всего:" + nl
+    text += str(total) + " " + pluralize(total, "запрос", "запроса", "запросов") + nl
+    text += str(days) + " " + pluralize(days, "день", "дня", "дней") + " активности" + nl
+    text += "~" + str(avg) + " " + pluralize(int(avg), "запрос", "запроса", "запросов") + "/день" + nl + nl
+
+    # Users
+    users_count = stats["total_users"]
+    text += str(users_count) + " " + pluralize(users_count, "пользователь", "пользователя", "пользователей") + nl
+
     await update.message.reply_text(text)
+
+    # Send user details as separate messages
+    for u in stats["users"][:10]:
+        utext = "--- " + u["name"]
+        if u["username"]:
+            utext += " (@" + u["username"] + ")"
+        utext += " ---" + nl
+        utext += "ID: " + u["user_id"] + nl
+        utext += "Всего: " + str(u["total_requests"]) + " " + pluralize(u["total_requests"], "запрос", "запроса", "запросов") + nl
+        utext += "Сегодня: " + str(u["requests_today"]) + nl + nl
+
+        if u["recent_questions"]:
+            utext += "Последние вопросы:" + nl
+            for q in u["recent_questions"]:
+                if q:
+                    short_q = (q[:80] + "...") if len(q) > 80 else q
+                    utext += "• " + short_q + nl
+
+        await update.message.reply_text(utext)
 
 
 def get_mentioned_chapters(results, answer):
@@ -121,7 +182,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
 
     answer = llm_client.generate_answer(question, context_chunks, is_expanded_search=True)
-    rate_limiter.record_request()
+
+    user = update.effective_user
+    user_info = {
+        'first_name': user.first_name or '',
+        'last_name': user.last_name or '',
+        'username': user.username or ''
+    }
+    rate_limiter.record_request(user_id=user_id, user_info=user_info, question=question)
 
     search_results_cache[user_id] = {"results": results, "question": question, "answer": answer}
 
