@@ -51,6 +51,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += "/status - статус базы знаний"
 
     user_id = str(update.effective_user.id)
+    logger.info(f"start_command: user_id={user_id}, ADMIN_IDS={ADMIN_TELEGRAM_IDS}")
     if ADMIN_TELEGRAM_IDS and user_id in ADMIN_TELEGRAM_IDS:
         text += nl + "/usage - статистика (админ)"
 
