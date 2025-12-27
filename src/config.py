@@ -7,29 +7,14 @@ load_dotenv()
 # Пути
 BASE_DIR = Path(__file__).parent.parent  # bot/
 DATA_DIR = BASE_DIR / "data"
-PARSED_DIR = DATA_DIR / "parsed"
-CHROMA_DIR = DATA_DIR / "chroma_db"
 
 # Токены (из переменных окружения Railway)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-VOYAGE_API_KEY = os.getenv("VOYAGE_API_KEY")  # Для эмбеддингов (экономит RAM)
-
-# Настройки чанков
-CHUNK_SIZE = 700  # символов в одном чанке
-CHUNK_OVERLAP = 100  # перекрытие между чанками
 
 # Настройки поиска
-TOP_K_RESULTS = 3  # количество релевантных фрагментов (снижено для экономии токенов)
-MIN_RELEVANCE_SCORE = 0.15  # минимальный порог релевантности (0-1)
-
-# Гибридный поиск (keyword + semantic). Отключить для экономии RAM
-ENABLE_HYBRID_SEARCH = os.getenv("ENABLE_HYBRID_SEARCH", "true").lower() == "true"
-
-# Лимиты Voyage AI (защита от списаний)
-# voyage-multilingual-2: 50M бесплатных токенов
-VOYAGE_FREE_LIMIT = 50_000_000  # 50M
-VOYAGE_HARD_LIMIT = int(os.getenv("VOYAGE_HARD_LIMIT", "45000000"))  # Остановить при 45M
+TOP_K_RESULTS = 5  # количество релевантных фрагментов
+MIN_RELEVANCE_SCORE = 0.15  # минимальный порог релевантности
 
 # Модель LLM (OpenRouter)
 # gpt-4o-mini: ~$0.00015/1K токенов, стабильная, быстрая
@@ -42,5 +27,5 @@ WARNING_THRESHOLD = 0.8    # уведомить админа при 80% лими
 # Telegram ID админов (для уведомлений о лимитах)
 # Можно указать несколько через запятую: 123456789,987654321
 # Узнать свой ID: написать боту @userinfobot
-_admin_ids = os.getenv("ADMIN_TELEGRAM_IDS", "")
-ADMIN_TELEGRAM_IDS = [id.strip() for id in _admin_ids.split(",") if id.strip()]
+_admin_ids = os.getenv("ADMIN_TELEGRAM_ID", "")
+ADMIN_TELEGRAM_ID = [id.strip() for id in _admin_ids.split(",") if id.strip()]

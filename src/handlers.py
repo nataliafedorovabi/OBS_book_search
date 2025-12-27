@@ -280,5 +280,3 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "close":
         await query.edit_message_reply_markup(reply_markup=None)
-
-
