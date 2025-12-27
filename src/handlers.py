@@ -49,6 +49,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += "Задайте вопрос по материалам, и я найду ответ." + nl + nl
     text += "/help - как задавать вопросы" + nl
     text += "/status - статус базы знаний"
+
+    user_id = str(update.effective_user.id)
+    if ADMIN_TELEGRAM_IDS and user_id in ADMIN_TELEGRAM_IDS:
+        text += nl + "/usage - статистика (админ)"
+
     await update.message.reply_text(text)
 
 
