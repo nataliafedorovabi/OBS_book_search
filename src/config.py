@@ -14,6 +14,11 @@ STATS_DIR = Path(os.getenv("STATS_DIR", str(DATA_DIR)))
 # Токены (из переменных окружения Railway)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+VOYAGE_API_KEY = os.getenv("VOYAGE_API_KEY")
+
+# Семантический поиск
+CHAPTER_EMBEDDINGS_PATH = DATA_DIR / "chapter_embeddings.json"
+VOYAGE_MODEL = "voyage-multilingual-2"
 
 # Настройки поиска
 TOP_K_RESULTS = 5  # количество релевантных фрагментов
