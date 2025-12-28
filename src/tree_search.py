@@ -467,7 +467,28 @@ class SemanticChapterSearcher:
                      'отличается', 'отличия', 'отличие', 'разница', 'различие', 'различия',
                      'сравни', 'сравнить', 'сравнение', 'похоже', 'похожи', 'общего'}
 
+        # Синонимы: кириллица <-> латиница для аббревиатур
+        synonyms = {
+            'стээп': ['steep', 'стээп'],
+            'steep': ['steep', 'стээп'],
+            'swot': ['swot', 'свот'],
+            'свот': ['swot', 'свот'],
+            'pestel': ['pestel', 'пестел'],
+            'пестел': ['pestel', 'пестел'],
+            'smart': ['smart', 'смарт'],
+            'смарт': ['smart', 'смарт'],
+        }
+
         keywords = [w for w in query_words if w not in stop_words and len(w) > 2]
+
+        # Расширяем keywords синонимами
+        expanded_keywords = []
+        for kw in keywords:
+            if kw in synonyms:
+                expanded_keywords.extend(synonyms[kw])
+            else:
+                expanded_keywords.append(kw)
+        keywords = list(set(expanded_keywords))
 
         results = []
         for chunk_id, chunk in self.tree._chunk_index.items():
