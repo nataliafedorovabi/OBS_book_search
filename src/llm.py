@@ -28,11 +28,9 @@ class LLMClient:
     def _format_book_name(self, book_raw: str) -> str:
         """Преобразует внутреннее имя книги в отображаемое."""
         if "R628_book" in book_raw:
-            part = book_raw.replace("R628_book", "")
-            return f"R628 Часть {part}"
+            return "Часть 1"
         elif "R629_book" in book_raw:
-            part = book_raw.replace("R629_book", "")
-            return f"R629 Часть {part}"
+            return "Часть 2"
         return book_raw or "Книга"
 
     def _call_llm(self, system_prompt: str, user_message: str,
