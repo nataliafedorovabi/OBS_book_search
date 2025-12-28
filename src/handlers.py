@@ -139,28 +139,22 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(utext)
 
 
-def get_mentioned_chapters(results, answer):
-    mentioned = []
+def get_chapters_from_results(results):
+    """
+    Извлекает уникальные главы из результатов поиска.
+    Эти главы = контекст, который был передан LLM для генерации ответа.
+    """
+    chapters = []
     seen_keys = set()
 
     for r in results:
         key = r.book_title + "|" + r.chapter_title
         if key in seen_keys:
             continue
+        seen_keys.add(key)
+        chapters.append({"book": r.book_title, "chapter": r.chapter_title, "summary": r.chapter_summary})
 
-        book_name = get_book_display_name(r.book_title)
-
-        ch_match = re.search(r"Глава\s*(\d+)", r.chapter_title)
-        if not ch_match:
-            continue
-        ch_num = ch_match.group(1)
-
-        pattern = re.escape(book_name) + r".*?Глава\s*" + ch_num + r"\b"
-        if re.search(pattern, answer, re.DOTALL):
-            seen_keys.add(key)
-            mentioned.append({"book": r.book_title, "chapter": r.chapter_title, "summary": r.chapter_summary})
-
-    return mentioned
+    return chapters
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -237,7 +231,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nl = chr(10)
 
     if data == "details":
-        chapters = get_mentioned_chapters(results, answer)
+        chapters = get_chapters_from_results(results)
 
         if not chapters:
             await query.message.reply_text("Главы не найдены.")
@@ -256,7 +250,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("ch_"):
         idx = int(data.replace("ch_", ""))
-        chapters = get_mentioned_chapters(results, answer)
+        chapters = get_chapters_from_results(results)
 
         if idx < len(chapters):
             ch = chapters[idx]
