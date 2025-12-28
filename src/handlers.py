@@ -42,8 +42,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     books = stats.get("books", 0)
     chapters = stats.get("chapters", 0)
     text = "Привет! Я бот-ассистент курсов:" + nl
-    text += "- R628 Управление организацией и персоналом" + nl
-    text += "- R629 Управление маркетингом и финансами" + nl + nl
+    text += "- Управление организацией и персоналом (далее Часть 1)" + nl
+    text += "- Управление маркетингом и финансами (далее Часть 2)" + nl + nl
     text += "В базе: " + str(books) + " " + pluralize(books, "книга", "книги", "книг")
     text += ", " + str(chapters) + " " + pluralize(chapters, "глава", "главы", "глав") + "." + nl + nl
     text += "Задайте вопрос по материалам, и я найду ответ." + nl + nl
