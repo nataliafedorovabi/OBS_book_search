@@ -2,8 +2,8 @@ import logging
 import re
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
-from src.config import TELEGRAM_TOKEN
-from src.tree_search import ContextTree, TreeSearcher
+from src.config import TELEGRAM_TOKEN, VOYAGE_API_KEY, CHAPTER_EMBEDDINGS_PATH, VOYAGE_MODEL
+from src.tree_search import ContextTree, TreeSearcher, SemanticChapterSearcher
 from src.llm import LLMClient
 from src.handlers import (
     init_services,
@@ -77,7 +77,16 @@ def main():
     logger.info("Инициализация LLM клиента...")
     llm_client = LLMClient()
 
-    searcher = TreeSearcher(tree, llm_client)
+    # Выбор searcher: семантический (VoyageAI) или keyword
+    if VOYAGE_API_KEY and CHAPTER_EMBEDDINGS_PATH.exists():
+        logger.info("Используем семантический поиск (VoyageAI)")
+        searcher = SemanticChapterSearcher(tree, CHAPTER_EMBEDDINGS_PATH, VOYAGE_API_KEY, VOYAGE_MODEL)
+    else:
+        if not VOYAGE_API_KEY:
+            logger.warning("VOYAGE_API_KEY не задан, используем keyword поиск")
+        elif not CHAPTER_EMBEDDINGS_PATH.exists():
+            logger.warning(f"Файл embeddings не найден: {CHAPTER_EMBEDDINGS_PATH}, используем keyword поиск")
+        searcher = TreeSearcher(tree, llm_client)
 
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
