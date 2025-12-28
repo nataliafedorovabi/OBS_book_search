@@ -524,7 +524,20 @@ class SemanticChapterSearcher:
         chapter_ids = [ch['id'] for ch in similar_chapters]
 
         # Шаг 3: Keyword поиск внутри найденных глав
-        results = self._keyword_search_in_chapters(chapter_ids, query, top_chunks)
+        all_results = self._keyword_search_in_chapters(chapter_ids, query, top_chunks * 3)
+
+        # Диверсификация: берём чанки из разных глав
+        results = []
+        chapter_counts = {}
+        max_per_chapter = max(2, top_chunks // len(chapter_ids)) if chapter_ids else top_chunks
+
+        for r in all_results:
+            ch_key = r.book_title + "|" + r.chapter_title
+            if chapter_counts.get(ch_key, 0) < max_per_chapter:
+                results.append(r)
+                chapter_counts[ch_key] = chapter_counts.get(ch_key, 0) + 1
+            if len(results) >= top_chunks:
+                break
 
         # Если keyword поиск ничего не нашёл, берём первые чанки из найденных глав
         if not results:
