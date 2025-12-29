@@ -193,25 +193,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     search_results_cache[user_id] = {"results": results, "question": question, "answer": answer}
 
-    mentioned_books = set()
-    for r in results:
-        book_name = get_book_display_name(r.book_title)
-        if book_name in answer:
-            mentioned_books.add(book_name)
-
-    if not mentioned_books:
-        for r in results:
-            mentioned_books.add(get_book_display_name(r.book_title))
-
-    sources = ", ".join(sorted(mentioned_books))
-    nl = chr(10)
-    book_emoji = chr(128218)
-    answer_with_sources = answer + nl + nl + book_emoji + " *Источники:* " + sources
-
     keyboard = [[InlineKeyboardButton("Подробнее", callback_data="details")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(answer_with_sources, parse_mode="Markdown", reply_markup=reply_markup)
+    await update.message.reply_text(answer, parse_mode="Markdown", reply_markup=reply_markup)
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -240,9 +225,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
         for i, ch in enumerate(chapters[:6]):
             book_name = get_book_display_name(ch["book"])
-            ch_title = ch["chapter"]
-            ch_short = ch_title[:30] + "..." if len(ch_title) > 30 else ch_title
-            keyboard.append([InlineKeyboardButton(book_name + ": " + ch_short, callback_data="ch_" + str(i))])
+            keyboard.append([InlineKeyboardButton(book_name, callback_data="ch_" + str(i))])
 
         keyboard.append([InlineKeyboardButton("Закрыть", callback_data="close")])
 
