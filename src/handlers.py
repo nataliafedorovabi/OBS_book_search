@@ -152,7 +152,7 @@ def get_chapters_from_results(results):
         if key in seen_keys:
             continue
         seen_keys.add(key)
-        chapters.append({"book": r.book_title, "chapter": r.chapter_title, "summary": r.chapter_summary})
+        chapters.append({"book": r.book_title, "chapter": r.chapter_title, "summary": r.chapter_description})
 
     return chapters
 

@@ -26,7 +26,8 @@ class SearchResult:
     score: float
     book_title: str
     chapter_title: str
-    chapter_summary: str
+    chapter_summary: str      # Для поиска
+    chapter_description: str  # Для отображения пользователю
     section_title: str
     keywords: List[str]
 
@@ -82,7 +83,8 @@ class ContextTree:
                         'book_title': book_title,
                         'chapter_id': ch_id,
                         'chapter_title': chapter.get('title'),
-                        'chapter_summary': chapter.get('summary')
+                        'chapter_summary': chapter.get('summary'),
+                        'chapter_description': chapter.get('description', chapter.get('summary'))
                     }
 
                     for chunk in section.get('chunks', []):
@@ -93,6 +95,7 @@ class ContextTree:
                             'chapter_id': ch_id,
                             'chapter_title': chapter.get('title'),
                             'chapter_summary': chapter.get('summary'),
+                            'chapter_description': chapter.get('description', chapter.get('summary')),
                             'section_id': sec_id,
                             'section_title': section.get('title'),
                             'section_summary': section.get('summary')
@@ -324,6 +327,7 @@ class TreeSearcher:
                     book_title=chunk.get('book_title', ''),
                     chapter_title=chapter_title,
                     chapter_summary=chunk.get('chapter_summary', ''),
+                    chapter_description=chunk.get('chapter_description', chunk.get('chapter_summary', '')),
                     section_title=chunk.get('section_title', ''),
                     keywords=chunk.get('keywords', [])
                 ))
@@ -515,6 +519,7 @@ class SemanticChapterSearcher:
                     book_title=chunk.get('book_title', ''),
                     chapter_title=chunk.get('chapter_title', ''),
                     chapter_summary=chunk.get('chapter_summary', ''),
+                    chapter_description=chunk.get('chapter_description', chunk.get('chapter_summary', '')),
                     section_title=chunk.get('section_title', ''),
                     keywords=chunk.get('keywords', [])
                 ))
@@ -573,6 +578,7 @@ class SemanticChapterSearcher:
                         book_title=chunk.get('book_title', ''),
                         chapter_title=chunk.get('chapter_title', ''),
                         chapter_summary=chunk.get('chapter_summary', ''),
+                        chapter_description=chunk.get('chapter_description', chunk.get('chapter_summary', '')),
                         section_title=chunk.get('section_title', ''),
                         keywords=chunk.get('keywords', [])
                     ))
