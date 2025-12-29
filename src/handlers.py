@@ -225,7 +225,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
         for i, ch in enumerate(chapters[:6]):
             book_name = get_book_display_name(ch["book"])
-            keyboard.append([InlineKeyboardButton(book_name, callback_data="ch_" + str(i))])
+            ch_title = ch["chapter"]
+            # Извлекаем номер главы
+            ch_match = re.search(r'Глава\s*(\d+)', ch_title)
+            ch_num = "Гл. " + ch_match.group(1) if ch_match else ""
+            btn_text = book_name + ", " + ch_num if ch_num else book_name
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data="ch_" + str(i))])
 
         keyboard.append([InlineKeyboardButton("Закрыть", callback_data="close")])
 

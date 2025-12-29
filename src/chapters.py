@@ -150,10 +150,10 @@ BOOK_NAMES = {
 
 def get_book_display_name(book_title: str) -> str:
     """Преобразует внутреннее имя книги в отображаемое."""
-    if "R628_book" in book_title:
-        return "Часть 1"
-    elif "R629_book" in book_title:
-        return "Часть 2"
+    if "R628" in book_title:
+        return "Управление организацией и персоналом"
+    elif "R629" in book_title:
+        return "Управление маркетингом и финансами"
     return book_title
 
 
