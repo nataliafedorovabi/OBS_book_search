@@ -368,7 +368,6 @@ class TreeSearcher:
                 return keywords, chapters
 
         # Fallback: простое разбиение на слова
-        import re
         words = re.findall(r'[а-яА-ЯёЁa-zA-Z]+', query.lower())
         stop_words = {'что', 'как', 'где', 'когда', 'почему', 'какой', 'какая', 'какие',
                      'это', 'такое', 'для', 'при', 'или', 'если', 'чем', 'между'}
@@ -552,10 +551,10 @@ class SemanticChapterSearcher:
         # Шаг 3: Keyword поиск внутри найденных глав
         all_results = self._keyword_search_in_chapters(chapter_ids, query, top_chunks * 3)
 
-        # Диверсификация: берём чанки из разных глав
+        # Диверсификация: берём чанки из разных глав (максимум 2 на главу)
         results = []
         chapter_counts = {}
-        max_per_chapter = max(2, top_chunks // len(chapter_ids)) if chapter_ids else top_chunks
+        max_per_chapter = 2  # Жёстко ограничиваем для разнообразия
 
         for r in all_results:
             ch_key = r.book_title + "|" + r.chapter_title

@@ -26,6 +26,7 @@ searcher: TreeSearcher = None
 llm_client: LLMClient = None
 rate_limiter: RateLimiter = None
 search_results_cache = {}
+CACHE_MAX_SIZE = 100  # Максимум кешированных результатов
 
 
 def init_services(tree_searcher: TreeSearcher, llm: LLMClient, app: Application = None):
@@ -191,12 +192,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     rate_limiter.record_request(user_id=user_id, user_info=user_info, question=question)
 
+    # Ограничиваем размер кеша
+    if len(search_results_cache) >= CACHE_MAX_SIZE:
+        oldest_key = next(iter(search_results_cache))
+        del search_results_cache[oldest_key]
     search_results_cache[user_id] = {"results": results, "question": question, "answer": answer}
 
     keyboard = [[InlineKeyboardButton("Подробнее", callback_data="details")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(answer, parse_mode="Markdown", reply_markup=reply_markup)
+    # Пробуем отправить с Markdown, если не получится - plain text
+    try:
+        await update.message.reply_text(answer, parse_mode="Markdown", reply_markup=reply_markup)
+    except Exception as e:
+        logger.warning("Markdown error in answer: " + str(e))
+        clean_answer = re.sub(r'\*+', '', answer)
+        clean_answer = re.sub(r'_+', '', clean_answer)
+        await update.message.reply_text(clean_answer, reply_markup=reply_markup)
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -244,6 +256,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ch = chapters[idx]
             book_name = get_book_display_name(ch["book"])
             summary = ch["summary"] or "Краткое содержание недоступно."
+            # Заменяем маркеры списка * на • чтобы не ломать Markdown
+            summary = re.sub(r'^\*\s+', '• ', summary, flags=re.MULTILINE)
+            summary = re.sub(r'\n\*\s+', '\n• ', summary)
             header = "*" + book_name + "*" + nl + "*" + ch["chapter"] + "*" + nl + nl
 
             keyboard = [
