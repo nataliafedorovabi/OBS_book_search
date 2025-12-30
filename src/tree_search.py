@@ -26,8 +26,7 @@ class SearchResult:
     score: float
     book_title: str
     chapter_title: str
-    chapter_summary: str      # Для поиска
-    chapter_description: str  # Для отображения пользователю
+    chapter_summary: str
     section_title: str
     keywords: List[str]
 
@@ -83,8 +82,7 @@ class ContextTree:
                         'book_title': book_title,
                         'chapter_id': ch_id,
                         'chapter_title': chapter.get('title'),
-                        'chapter_summary': chapter.get('summary'),
-                        'chapter_description': chapter.get('description', chapter.get('summary'))
+                        'chapter_summary': chapter.get('summary')
                     }
 
                     for chunk in section.get('chunks', []):
@@ -95,7 +93,6 @@ class ContextTree:
                             'chapter_id': ch_id,
                             'chapter_title': chapter.get('title'),
                             'chapter_summary': chapter.get('summary'),
-                            'chapter_description': chapter.get('description', chapter.get('summary')),
                             'section_id': sec_id,
                             'section_title': section.get('title'),
                             'section_summary': section.get('summary')
@@ -240,10 +237,7 @@ class TreeSearcher:
         stop_words = {'что', 'как', 'где', 'когда', 'почему', 'какой', 'какая', 'какие',
                      'это', 'такое', 'для', 'при', 'или', 'если', 'чем', 'между',
                      'помню', 'была', 'скажи', 'искать', 'найти', 'покажи', 'расскажи',
-                     'можно', 'подробнее', 'расшифровать', 'модель', 'расскажи', 'про',
-                     # Общие сравнительные слова (дают ложные срабатывания)
-                     'отличается', 'отличия', 'отличие', 'разница', 'различие', 'различия',
-                     'сравни', 'сравнить', 'сравнение', 'похоже', 'похожи', 'общего'}
+                     'можно', 'подробнее', 'расшифровать', 'модель', 'расскажи', 'про'}
 
         # Слова из запроса — приоритетные (в начало списка)
         priority_words = []
@@ -327,7 +321,6 @@ class TreeSearcher:
                     book_title=chunk.get('book_title', ''),
                     chapter_title=chapter_title,
                     chapter_summary=chunk.get('chapter_summary', ''),
-                    chapter_description=chunk.get('chapter_description', chunk.get('chapter_summary', '')),
                     section_title=chunk.get('section_title', ''),
                     keywords=chunk.get('keywords', [])
                 ))
@@ -368,6 +361,7 @@ class TreeSearcher:
                 return keywords, chapters
 
         # Fallback: простое разбиение на слова
+        import re
         words = re.findall(r'[а-яА-ЯёЁa-zA-Z]+', query.lower())
         stop_words = {'что', 'как', 'где', 'когда', 'почему', 'какой', 'какая', 'какие',
                      'это', 'такое', 'для', 'при', 'или', 'если', 'чем', 'между'}
@@ -387,202 +381,3 @@ class TreeSearcher:
                 lines.append(f"  Ключевые концепции: {concepts}")
             lines.append("")
         return "\n".join(lines)
-
-
-class SemanticChapterSearcher:
-    """
-    Семантический поиск по главам.
-
-    Стратегия:
-    1. Semantic search по embeddings summary глав (VoyageAI)
-    2. Keyword search по чанкам внутри найденных глав
-    """
-
-    def __init__(self, tree: ContextTree, embeddings_path: Path, voyage_api_key: str, voyage_model: str = "voyage-multilingual-2"):
-        self.tree = tree
-        self.voyage_api_key = voyage_api_key
-        self.voyage_model = voyage_model
-        self.embeddings = self._load_embeddings(embeddings_path)
-        self._voyage_client = None
-
-    def _load_embeddings(self, embeddings_path: Path) -> Dict:
-        """Загружает embeddings глав из JSON."""
-        if not embeddings_path.exists():
-            logger.warning(f"Файл embeddings не найден: {embeddings_path}")
-            return {}
-
-        with open(embeddings_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-
-        logger.info(f"Загружено embeddings для {len(data.get('chapters', []))} глав")
-        return data
-
-    @property
-    def voyage_client(self):
-        """Ленивая инициализация VoyageAI клиента."""
-        if self._voyage_client is None:
-            import voyageai
-            self._voyage_client = voyageai.Client(api_key=self.voyage_api_key)
-        return self._voyage_client
-
-    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
-        """Вычисляет косинусное сходство между двумя векторами."""
-        dot_product = sum(a * b for a, b in zip(vec1, vec2))
-        norm1 = sum(a * a for a in vec1) ** 0.5
-        norm2 = sum(b * b for b in vec2) ** 0.5
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-        return dot_product / (norm1 * norm2)
-
-    def _find_similar_chapters(self, query_embedding: List[float], top_k: int = 4) -> List[Dict]:
-        """Находит наиболее похожие главы по embedding."""
-        chapters = self.embeddings.get('chapters', [])
-        if not chapters:
-            return []
-
-        # Вычисляем similarity для каждой главы
-        similarities = []
-        for ch in chapters:
-            ch_embedding = ch.get('embedding', [])
-            if ch_embedding:
-                sim = self._cosine_similarity(query_embedding, ch_embedding)
-                similarities.append({
-                    'id': ch['id'],
-                    'book_title': ch['book_title'],
-                    'chapter_title': ch['chapter_title'],
-                    'similarity': sim
-                })
-
-        # Сортируем по similarity
-        similarities.sort(key=lambda x: x['similarity'], reverse=True)
-
-        logger.info(f"Top {top_k} chapters by semantic: {[(s['chapter_title'][:30], round(s['similarity'], 3)) for s in similarities[:top_k]]}")
-        return similarities[:top_k]
-
-    def _keyword_search_in_chapters(self, chapter_ids: List[str], query: str, top_chunks: int) -> List[SearchResult]:
-        """Keyword поиск внутри указанных глав."""
-        # Извлекаем ключевые слова из запроса
-        query_words = re.findall(r'[а-яА-ЯёЁa-zA-Z]+', query.lower())
-        stop_words = {'что', 'как', 'где', 'когда', 'почему', 'какой', 'какая', 'какие',
-                     'это', 'такое', 'для', 'при', 'или', 'если', 'чем', 'между',
-                     'помню', 'была', 'скажи', 'искать', 'найти', 'покажи', 'расскажи',
-                     'можно', 'подробнее', 'расшифровать', 'модель', 'про',
-                     'отличается', 'отличия', 'отличие', 'разница', 'различие', 'различия',
-                     'сравни', 'сравнить', 'сравнение', 'похоже', 'похожи', 'общего'}
-
-        # Синонимы: кириллица <-> латиница для аббревиатур
-        synonyms = {
-            'стээп': ['steep', 'стээп'],
-            'steep': ['steep', 'стээп'],
-            'swot': ['swot', 'свот'],
-            'свот': ['swot', 'свот'],
-            'pestel': ['pestel', 'пестел'],
-            'пестел': ['pestel', 'пестел'],
-            'smart': ['smart', 'смарт'],
-            'смарт': ['smart', 'смарт'],
-        }
-
-        keywords = [w for w in query_words if w not in stop_words and len(w) > 2]
-
-        # Расширяем keywords синонимами
-        expanded_keywords = []
-        for kw in keywords:
-            if kw in synonyms:
-                expanded_keywords.extend(synonyms[kw])
-            else:
-                expanded_keywords.append(kw)
-        keywords = list(set(expanded_keywords))
-
-        results = []
-        for chunk_id, chunk in self.tree._chunk_index.items():
-            # Проверяем, что чанк из нужной главы
-            if chunk.get('chapter_id') not in chapter_ids:
-                continue
-
-            score = 0
-            text_lower = chunk.get('text', '').lower()
-            section_lower = chunk.get('section_title', '').lower()
-
-            for kw in keywords:
-                if kw in text_lower:
-                    count = text_lower.count(kw)
-                    score += count * 2.0
-                if kw in section_lower:
-                    score += 5
-
-            if score > 0:
-                results.append(SearchResult(
-                    chunk_id=chunk_id,
-                    text=chunk['text'],
-                    score=score,
-                    book_title=chunk.get('book_title', ''),
-                    chapter_title=chunk.get('chapter_title', ''),
-                    chapter_summary=chunk.get('chapter_summary', ''),
-                    chapter_description=chunk.get('chapter_description', chunk.get('chapter_summary', '')),
-                    section_title=chunk.get('section_title', ''),
-                    keywords=chunk.get('keywords', [])
-                ))
-
-        # Сортируем и возвращаем топ
-        results.sort(key=lambda x: x.score, reverse=True)
-        return results[:top_chunks]
-
-    def search(self, query: str, top_chapters: int = 4, top_chunks: int = 6) -> List[SearchResult]:
-        """
-        Главный метод поиска.
-
-        1. Создаём embedding вопроса через VoyageAI
-        2. Находим похожие главы по cosine similarity
-        3. Ищем чанки внутри найденных глав по keywords
-        """
-        if not self.embeddings.get('chapters'):
-            logger.warning("Embeddings не загружены, fallback на пустой результат")
-            return []
-
-        # Шаг 1: Создаём embedding вопроса
-        logger.info(f"Создаём embedding для вопроса: {query[:50]}...")
-        result = self.voyage_client.embed([query], model=self.voyage_model, input_type="query")
-        query_embedding = result.embeddings[0]
-
-        # Шаг 2: Находим похожие главы
-        similar_chapters = self._find_similar_chapters(query_embedding, top_chapters)
-        chapter_ids = [ch['id'] for ch in similar_chapters]
-
-        # Шаг 3: Keyword поиск внутри найденных глав
-        all_results = self._keyword_search_in_chapters(chapter_ids, query, top_chunks * 3)
-
-        # Диверсификация: берём чанки из разных глав (максимум 2 на главу)
-        results = []
-        chapter_counts = {}
-        max_per_chapter = 2  # Жёстко ограничиваем для разнообразия
-
-        for r in all_results:
-            ch_key = r.book_title + "|" + r.chapter_title
-            if chapter_counts.get(ch_key, 0) < max_per_chapter:
-                results.append(r)
-                chapter_counts[ch_key] = chapter_counts.get(ch_key, 0) + 1
-            if len(results) >= top_chunks:
-                break
-
-        # Если keyword поиск ничего не нашёл, берём первые чанки из найденных глав
-        if not results:
-            logger.info("Keyword поиск не нашёл результатов, берём первые чанки из глав")
-            for ch_id in chapter_ids:
-                chunks = self.tree.get_chapter_chunks(ch_id)
-                for chunk in chunks[:2]:
-                    results.append(SearchResult(
-                        chunk_id=chunk.get('id', ''),
-                        text=chunk.get('text', ''),
-                        score=1.0,
-                        book_title=chunk.get('book_title', ''),
-                        chapter_title=chunk.get('chapter_title', ''),
-                        chapter_summary=chunk.get('chapter_summary', ''),
-                        chapter_description=chunk.get('chapter_description', chunk.get('chapter_summary', '')),
-                        section_title=chunk.get('section_title', ''),
-                        keywords=chunk.get('keywords', [])
-                    ))
-                if len(results) >= top_chunks:
-                    break
-
-        logger.info(f"Семантический поиск: найдено {len(results)} чанков")
-        return results[:top_chunks]

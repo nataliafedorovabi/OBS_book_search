@@ -26,7 +26,6 @@ searcher: TreeSearcher = None
 llm_client: LLMClient = None
 rate_limiter: RateLimiter = None
 search_results_cache = {}
-CACHE_MAX_SIZE = 100  # Максимум кешированных результатов
 
 
 def init_services(tree_searcher: TreeSearcher, llm: LLMClient, app: Application = None):
@@ -43,8 +42,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     books = stats.get("books", 0)
     chapters = stats.get("chapters", 0)
     text = "Привет! Я бот-ассистент курсов:" + nl
-    text += "- Управление организацией и персоналом (далее Часть 1)" + nl
-    text += "- Управление маркетингом и финансами (далее Часть 2)" + nl + nl
+    text += "- R628 Управление организацией и персоналом" + nl
+    text += "- R629 Управление маркетингом и финансами" + nl + nl
     text += "В базе: " + str(books) + " " + pluralize(books, "книга", "книги", "книг")
     text += ", " + str(chapters) + " " + pluralize(chapters, "глава", "главы", "глав") + "." + nl + nl
     text += "Задайте вопрос по материалам, и я найду ответ." + nl + nl
@@ -140,22 +139,28 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(utext)
 
 
-def get_chapters_from_results(results):
-    """
-    Извлекает уникальные главы из результатов поиска.
-    Эти главы = контекст, который был передан LLM для генерации ответа.
-    """
-    chapters = []
+def get_mentioned_chapters(results, answer):
+    mentioned = []
     seen_keys = set()
 
     for r in results:
         key = r.book_title + "|" + r.chapter_title
         if key in seen_keys:
             continue
-        seen_keys.add(key)
-        chapters.append({"book": r.book_title, "chapter": r.chapter_title, "summary": r.chapter_description})
 
-    return chapters
+        book_name = get_book_display_name(r.book_title)
+
+        ch_match = re.search(r"Глава\s*(\d+)", r.chapter_title)
+        if not ch_match:
+            continue
+        ch_num = ch_match.group(1)
+
+        pattern = re.escape(book_name) + r".*?Глава\s*" + ch_num + r"\b"
+        if re.search(pattern, answer, re.DOTALL):
+            seen_keys.add(key)
+            mentioned.append({"book": r.book_title, "chapter": r.chapter_title, "summary": r.chapter_summary})
+
+    return mentioned
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -192,23 +197,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     rate_limiter.record_request(user_id=user_id, user_info=user_info, question=question)
 
-    # Ограничиваем размер кеша
-    if len(search_results_cache) >= CACHE_MAX_SIZE:
-        oldest_key = next(iter(search_results_cache))
-        del search_results_cache[oldest_key]
     search_results_cache[user_id] = {"results": results, "question": question, "answer": answer}
+
+    mentioned_books = set()
+    for r in results:
+        book_name = get_book_display_name(r.book_title)
+        if book_name in answer:
+            mentioned_books.add(book_name)
+
+    if not mentioned_books:
+        for r in results:
+            mentioned_books.add(get_book_display_name(r.book_title))
+
+    sources = ", ".join(sorted(mentioned_books))
+    nl = chr(10)
+    book_emoji = chr(128218)
+    answer_with_sources = answer + nl + nl + book_emoji + " *Источники:* " + sources
 
     keyboard = [[InlineKeyboardButton("Подробнее", callback_data="details")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Пробуем отправить с Markdown, если не получится - plain text
-    try:
-        await update.message.reply_text(answer, parse_mode="Markdown", reply_markup=reply_markup)
-    except Exception as e:
-        logger.warning("Markdown error in answer: " + str(e))
-        clean_answer = re.sub(r'\*+', '', answer)
-        clean_answer = re.sub(r'_+', '', clean_answer)
-        await update.message.reply_text(clean_answer, reply_markup=reply_markup)
+    await update.message.reply_text(answer_with_sources, parse_mode="Markdown", reply_markup=reply_markup)
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -228,7 +237,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nl = chr(10)
 
     if data == "details":
-        chapters = get_chapters_from_results(results)
+        chapters = get_mentioned_chapters(results, answer)
 
         if not chapters:
             await query.message.reply_text("Главы не найдены.")
@@ -238,11 +247,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i, ch in enumerate(chapters[:6]):
             book_name = get_book_display_name(ch["book"])
             ch_title = ch["chapter"]
-            # Извлекаем номер главы
-            ch_match = re.search(r'Глава\s*(\d+)', ch_title)
-            ch_num = "Гл. " + ch_match.group(1) if ch_match else ""
-            btn_text = book_name + ", " + ch_num if ch_num else book_name
-            keyboard.append([InlineKeyboardButton(btn_text, callback_data="ch_" + str(i))])
+            ch_short = ch_title[:30] + "..." if len(ch_title) > 30 else ch_title
+            keyboard.append([InlineKeyboardButton(book_name + ": " + ch_short, callback_data="ch_" + str(i))])
 
         keyboard.append([InlineKeyboardButton("Закрыть", callback_data="close")])
 
@@ -250,15 +256,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("ch_"):
         idx = int(data.replace("ch_", ""))
-        chapters = get_chapters_from_results(results)
+        chapters = get_mentioned_chapters(results, answer)
 
         if idx < len(chapters):
             ch = chapters[idx]
             book_name = get_book_display_name(ch["book"])
             summary = ch["summary"] or "Краткое содержание недоступно."
-            # Заменяем маркеры списка * на • чтобы не ломать Markdown
-            summary = re.sub(r'^\*\s+', '• ', summary, flags=re.MULTILINE)
-            summary = re.sub(r'\n\*\s+', '\n• ', summary)
             header = "*" + book_name + "*" + nl + "*" + ch["chapter"] + "*" + nl + nl
 
             keyboard = [

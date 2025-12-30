@@ -2,11 +2,10 @@
 import json
 from datetime import datetime, date, timedelta
 from pathlib import Path
-from src.config import DAILY_REQUEST_LIMIT, WARNING_THRESHOLD, STATS_DIR
+from src.config import DAILY_REQUEST_LIMIT, WARNING_THRESHOLD, DATA_DIR
 
-# Создаём директорию для статистики если её нет (для Railway Volume)
-STATS_DIR.mkdir(parents=True, exist_ok=True)
-STATS_FILE = STATS_DIR / "usage_stats.json"
+
+STATS_FILE = DATA_DIR / "usage_stats.json"
 
 
 class RateLimiter:
